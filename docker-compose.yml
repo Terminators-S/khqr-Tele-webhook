@@ -1,0 +1,87 @@
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-khqr}
+      POSTGRES_USER: ${POSTGRES_USER:-khqr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - khqr_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-khqr} -d ${POSTGRES_DB:-khqr}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-khqr}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-khqr}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-khqr}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-khqr}
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "127.0.0.1:8088:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  settlement:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-khqr}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-khqr}
+    command: ["python", "-m", "app.workers.settlement"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  webhook:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-khqr}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-khqr}
+    command: ["python", "-m", "app.workers.webhook"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  telegram:
+    build: .
+    profiles: ["telegram"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-khqr}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-khqr}
+      TELEGRAM_SESSION_NAME: /runtime/khqr_collector
+      TELEGRAM_SHADOW_ONLY: "true"
+    command: ["python", "-m", "app.workers.telegram"]
+    volumes:
+      - ./runtime:/runtime
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  khqr_pg:
