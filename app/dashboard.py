@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import shutil
 import stat
 from pathlib import Path
 from typing import Literal
@@ -24,6 +25,7 @@ from .dashboard_auth import (
 from .db import get_db
 from .khqr_asset import (
     KhqrAssetError,
+    asset_dir,
     image_exists,
     image_metadata,
     image_path,
@@ -159,6 +161,29 @@ def _store_slug(name: str) -> str:
     return base
 
 
+def _apply_khqr_asset(
+    db: Session,
+    source: models.PaymentSource,
+    asset,
+    *,
+    business: models.Business | None = None,
+) -> models.PaymentSource:
+    business = business or db.get(models.Business, source.business_id)
+    source.static_khqr = asset.payload
+    source.currency = asset.validation.currency or source.currency
+    source.merchant_alias = (
+        (asset.validation.merchant_name or "").strip()
+        or (business.name if business else source.merchant_alias)
+        or source.name
+    )
+    if source.name.endswith(" Payments") or source.name.startswith("New payment QR"):
+        merchant = (asset.validation.merchant_name or "").strip()
+        source.name = merchant or source.name
+    db.commit()
+    db.refresh(source)
+    return source
+
+
 def _primary_source(db: Session, business_id: str) -> models.PaymentSource | None:
     return db.scalar(
         select(models.PaymentSource)
@@ -169,7 +194,14 @@ def _primary_source(db: Session, business_id: str) -> models.PaymentSource | Non
 
 
 def _store_payload(db: Session, business: models.Business) -> dict:
-    source = _primary_source(db, business.id)
+    sources = list(
+        db.scalars(
+            select(models.PaymentSource)
+            .where(models.PaymentSource.business_id == business.id)
+            .order_by(models.PaymentSource.created_at)
+        )
+    )
+    source_payloads = [_source_payload(source) for source in sources]
     return {
         "id": business.id,
         "name": business.name,
@@ -178,7 +210,9 @@ def _store_payload(db: Session, business: models.Business) -> dict:
         "webhook_configured": bool(business.webhook_url),
         "is_active": business.is_active,
         "created_at": business.created_at,
-        "source": _source_payload(source) if source else None,
+        "source": source_payloads[0] if source_payloads else None,
+        "sources": source_payloads,
+        "source_count": len(source_payloads),
     }
 
 
@@ -431,10 +465,20 @@ def dashboard_update_store(
     business = db.get(models.Business, store_id)
     if not business:
         raise HTTPException(status_code=404, detail="store not found")
-    source = _primary_source(db, business.id)
-    if source and source.enabled:
-        raise HTTPException(status_code=409, detail="disable the store before editing setup")
-    if source and source.static_khqr and source.currency != payload.currency:
+    sources = list(
+        db.scalars(
+            select(models.PaymentSource)
+            .where(models.PaymentSource.business_id == business.id)
+            .order_by(models.PaymentSource.created_at)
+        )
+    )
+    if any(source.enabled for source in sources):
+        raise HTTPException(status_code=409, detail="disable every payment source before editing store setup")
+    if (
+        len(sources) == 1
+        and sources[0].static_khqr
+        and sources[0].currency != payload.currency
+    ):
         raise HTTPException(
             status_code=409,
             detail="replace the uploaded KHQR image to change currency",
@@ -448,11 +492,12 @@ def dashboard_update_store(
             generate_webhook_secret() if payload.webhook_url else None
         )
         new_webhook_secret = business.webhook_secret
-    if source:
-        source.name = payload.name.strip() + " Payments"
-        if not source.static_khqr:
+    for source in sources:
+        if not source.static_khqr and not image_exists(source.id):
             source.currency = payload.currency
             source.merchant_alias = payload.name.strip()
+            if source.name.endswith(" Payments") or source.name.startswith("New payment QR"):
+                source.name = payload.name.strip() + " Payments"
     db.commit()
     db.refresh(business)
     result = _store_payload(db, business)
@@ -465,6 +510,7 @@ def dashboard_update_store(
 def dashboard_store_integration(
     store_id: str,
     request: Request,
+    source_id: str | None = None,
     _session=Depends(require_dashboard_session),
     db: Session = Depends(get_db),
 ):
@@ -472,7 +518,11 @@ def dashboard_store_integration(
     if not business:
         raise HTTPException(status_code=404, detail="store not found")
     settings = get_settings()
-    source = _primary_source(db, business.id)
+    source = db.get(models.PaymentSource, source_id) if source_id else _primary_source(db, business.id)
+    if source_id and not source:
+        raise HTTPException(status_code=404, detail="payment source not found for this store")
+    if source and source.business_id != business.id:
+        raise HTTPException(status_code=404, detail="payment source not found for this store")
     source_payload = _source_payload(source) if source else None
     verified = bool(source and _source_has_verified_acceptance(db, source.id))
     live_collector_allowed = bool(
@@ -712,15 +762,7 @@ async def dashboard_upload_khqr_image(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     business = db.get(models.Business, source.business_id)
-    source.static_khqr = asset.payload
-    source.currency = asset.validation.currency or source.currency
-    source.merchant_alias = (
-        (asset.validation.merchant_name or "").strip()
-        or (business.name if business else source.merchant_alias)
-        or source.name
-    )
-    db.commit()
-    db.refresh(source)
+    _apply_khqr_asset(db, source, asset, business=business)
 
     result = _source_payload(source)
     result.update({
@@ -731,6 +773,130 @@ async def dashboard_upload_khqr_image(
         "image_height": asset.height,
     })
     return result
+
+
+@router.post("/api/stores/{store_id}/khqr-images")
+async def dashboard_bulk_upload_khqr_images(
+    store_id: str,
+    files: list[UploadFile] = File(...),
+    _session=Depends(require_dashboard_csrf),
+    db: Session = Depends(get_db),
+):
+    business = db.get(models.Business, store_id)
+    if not business:
+        raise HTTPException(status_code=404, detail="store not found")
+    if not files:
+        raise HTTPException(status_code=400, detail="choose at least one KHQR image")
+    if len(files) > 20:
+        raise HTTPException(status_code=400, detail="upload at most 20 KHQR images at once")
+
+    existing_sources = list(
+        db.scalars(
+            select(models.PaymentSource)
+            .where(models.PaymentSource.business_id == store_id)
+            .order_by(models.PaymentSource.created_at)
+        )
+    )
+    reusable = [
+        source for source in existing_sources
+        if not source.enabled
+        and not (source.static_khqr or "").strip()
+        and not image_exists(source.id)
+    ]
+    existing_payloads = {
+        (source.static_khqr or "").strip(): source.id
+        for source in existing_sources
+        if (source.static_khqr or "").strip()
+    }
+    limit = get_settings().khqr_upload_max_bytes
+    created: list[dict] = []
+    errors: list[dict] = []
+
+    for index, file in enumerate(files, start=1):
+        filename = (file.filename or f"khqr-{index}.png").strip() or f"khqr-{index}.png"
+        data = await file.read(limit + 1)
+        if len(data) > limit:
+            errors.append({"filename": filename, "error": "KHQR image is too large"})
+            continue
+
+        source = reusable.pop(0) if reusable else None
+        source_was_created = source is None
+        if source is None:
+            source = core.create_source(
+                db,
+                business.id,
+                name=f"New payment QR {len(existing_sources) + len(created) + 1}",
+                currency="USD",
+                telegram_group_id=None,
+                telegram_sender_id=None,
+                merchant_alias=business.name,
+                static_khqr=None,
+                enabled=False,
+            )
+
+        try:
+            asset = save_uploaded_khqr(
+                source.id,
+                data,
+                filename=filename,
+                media_type=file.content_type,
+            )
+            duplicate_source_id = existing_payloads.get(asset.payload)
+            if duplicate_source_id and duplicate_source_id != source.id:
+                shutil.rmtree(asset_dir(source.id), ignore_errors=True)
+                if source_was_created:
+                    db.delete(source)
+                    db.commit()
+                else:
+                    reusable.insert(0, source)
+                errors.append({
+                    "filename": filename,
+                    "error": "this KHQR is already configured for this store",
+                })
+                continue
+
+            _apply_khqr_asset(db, source, asset, business=business)
+            existing_payloads[asset.payload] = source.id
+            payload = _source_payload(source)
+            payload.update({
+                "upload_valid": True,
+                "uploaded_filename": asset.filename,
+                "uploaded_sha256": asset.sha256,
+                "image_width": asset.width,
+                "image_height": asset.height,
+            })
+            created.append(payload)
+        except KhqrAssetError as exc:
+            shutil.rmtree(asset_dir(source.id), ignore_errors=True)
+            if source_was_created:
+                db.delete(source)
+                db.commit()
+            else:
+                reusable.insert(0, source)
+            errors.append({"filename": filename, "error": str(exc)})
+        except core.Conflict as exc:
+            shutil.rmtree(asset_dir(source.id), ignore_errors=True)
+            if source_was_created:
+                db.delete(source)
+                db.commit()
+            else:
+                reusable.insert(0, source)
+            errors.append({"filename": filename, "error": str(exc)})
+        except Exception:
+            shutil.rmtree(asset_dir(source.id), ignore_errors=True)
+            if source_was_created:
+                db.delete(source)
+                db.commit()
+            else:
+                reusable.insert(0, source)
+            raise
+
+    db.expire_all()
+    return {
+        "created": created,
+        "errors": errors,
+        "store": _store_payload(db, business),
+    }
 
 
 @router.post("/api/sources/{source_id}/telegram-group")

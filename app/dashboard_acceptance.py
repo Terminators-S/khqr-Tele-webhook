@@ -44,6 +44,10 @@ class AcceptanceScan(BaseModel):
     limit: int = Field(default=120, ge=10, le=500)
 
 
+class AcceptanceRecover(BaseModel):
+    trx_id: str = Field(min_length=6, max_length=128)
+
+
 def _metadata(intent: models.PaymentIntent) -> dict:
     try:
         value = json.loads(intent.metadata_json or "{}")
@@ -174,6 +178,7 @@ def _result_payload(intent, request, source) -> dict:
         "would_paid_minor": meta.get("would_paid_minor"),
         "would_excess_minor": meta.get("would_excess_minor"),
         "match_reason": meta.get("match_reason"),
+        "recovery_method": meta.get("recovery_method"),
         "webhook_suppressed": True,
         "source_enabled": bool(source.enabled),
     }
@@ -399,6 +404,86 @@ async def acceptance_scan(
     return _result_payload(intent, request, source)
 
 
+@router.post("/{intent_id}/recover")
+async def acceptance_recover_by_trx(
+    intent_id: str,
+    payload: AcceptanceRecover,
+    _session: DashboardSession = Depends(require_dashboard_csrf),
+    db: Session = Depends(get_db),
+):
+    intent, request, source = _require_test_intent(db, intent_id)
+    if source.enabled:
+        raise HTTPException(status_code=409, detail="normal source became enabled; recovery stopped")
+
+    wanted_trx = payload.trx_id.strip()
+    client, session_path, authorized, _account_id = await _connect_authorized()
+    try:
+        if not authorized:
+            raise HTTPException(status_code=409, detail="Telegram session is not authorized")
+        async for _dialog in client.get_dialogs(limit=500):
+            pass
+
+        candidate = None
+        async for message in client.get_chat_history(int(source.telegram_group_id), limit=500):
+            sender_id = _message_sender_id(message)
+            if sender_id != source.telegram_sender_id:
+                continue
+            raw = message.text or message.caption or ""
+            parsed = parse_aba_text(raw)
+            if (parsed.trx_id or "").strip() != wanted_trx:
+                continue
+            received_at = getattr(message, "date", None)
+            if received_at and core.as_utc(received_at) < (
+                core.as_utc(intent.created_at) - timedelta(seconds=60)
+            ):
+                continue
+            if received_at and core.as_utc(received_at) > core.as_utc(intent.history_expires_at):
+                continue
+            candidate = (message, raw, parsed, sender_id)
+            break
+    finally:
+        await _disconnect(client, session_path)
+
+    if candidate is None:
+        raise HTTPException(
+            status_code=404,
+            detail="transaction was not found in this payment account's trusted Telegram history",
+        )
+
+    message, raw, parsed, sender_id = candidate
+    evidence = core.ingest_evidence(
+        db,
+        source_id=source.id,
+        transport="telegram-acceptance-recovery",
+        transport_message_id=str(message.id),
+        sender_id=sender_id,
+        raw_text=raw,
+        received_at=getattr(message, "date", None),
+        trx_id=parsed.trx_id,
+        amount_minor=parsed.amount_minor,
+        currency=parsed.currency,
+        remark=parsed.remark,
+        initial_state="SHADOW",
+    )
+    previous_result = str(_metadata(intent).get("result") or "WAITING")
+    preview = _preview_match(db, request, evidence)
+    if previous_result == "EXPIRED" and preview.get("result") != "VERIFIED":
+        preview = dict(preview)
+        preview["result"] = "EXPIRED"
+    trx = evidence.trx_id or ""
+    _save_result(
+        db,
+        intent,
+        **preview,
+        evidence_id=evidence.id,
+        trx_tail=trx[-8:],
+        observed_amount_minor=evidence.amount_minor,
+        observed_remark=evidence.remark,
+        recovery_method="trx_id",
+    )
+    return _result_payload(intent, request, source)
+
+
 @router.post("/{intent_id}/cancel")
 def acceptance_cancel(
     intent_id: str,
@@ -406,7 +491,8 @@ def acceptance_cancel(
     db: Session = Depends(get_db),
 ):
     intent, request, source = _require_test_intent(db, intent_id)
-    if _metadata(intent).get("result") == "WAITING":
+    current = str(_metadata(intent).get("result") or "WAITING")
+    if current not in {"VERIFIED", "CANCELLED", "EXPIRED"}:
         reservation = db.scalar(
             select(models.AmountReservation).where(models.AmountReservation.request_id == request.id)
         )

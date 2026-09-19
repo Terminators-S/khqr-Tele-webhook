@@ -409,3 +409,112 @@ def test_dashboard_integration_manifest_and_secret_rotation(db):
     assert rotated_secret.status_code == 200
     assert rotated_secret.json()["webhook_secret"].startswith("whsec_")
     assert rotated_secret.json()["webhook_secret"] != first_secret
+
+
+def test_store_exposes_multiple_sources_and_bulk_khqr_upload(monkeypatch, tmp_path):
+    use_asset_root(monkeypatch, tmp_path)
+    csrf = login()
+    store = create_store(csrf, "Multi QR Store")
+    assert len(store["sources"]) == 1
+    first_source_id = store["source"]["id"]
+
+    first_image = khqr_png_bytes(
+        account_id="multi-one@aba",
+        merchant_name="Multi One",
+        currency="USD",
+    )
+    second_image = khqr_png_bytes(
+        account_id="multi-two@aba",
+        merchant_name="Multi Two",
+        currency="USD",
+    )
+    response = client.post(
+        f"/dashboard/api/stores/{store['id']}/khqr-images",
+        headers={"X-CSRF-Token": csrf},
+        files=[
+            ("files", ("one.png", first_image, "image/png")),
+            ("files", ("two.png", second_image, "image/png")),
+        ],
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["errors"] == []
+    assert len(body["created"]) == 2
+    assert body["store"]["source_count"] == 2
+    assert len(body["store"]["sources"]) == 2
+    assert body["store"]["sources"][0]["id"] == first_source_id
+    assert all(row["khqr_valid"] for row in body["store"]["sources"])
+
+    account_ids = {row["khqr_account_id"] for row in body["store"]["sources"]}
+    assert account_ids == {"multi-one@aba", "multi-two@aba"}
+
+    duplicate = client.post(
+        f"/dashboard/api/stores/{store['id']}/khqr-images",
+        headers={"X-CSRF-Token": csrf},
+        files=[("files", ("duplicate.png", first_image, "image/png"))],
+    )
+    assert duplicate.status_code == 200
+    duplicate_body = duplicate.json()
+    assert duplicate_body["created"] == []
+    assert len(duplicate_body["errors"]) == 1
+    assert "already configured" in duplicate_body["errors"][0]["error"]
+    assert duplicate_body["store"]["source_count"] == 2
+
+
+def test_store_integration_can_target_selected_payment_source(monkeypatch, tmp_path):
+    use_asset_root(monkeypatch, tmp_path)
+    csrf = login()
+    store = create_store(csrf, "Selected Source Store")
+    images = [
+        khqr_png_bytes(account_id="selected-one@aba", merchant_name="Selected One"),
+        khqr_png_bytes(account_id="selected-two@aba", merchant_name="Selected Two"),
+    ]
+    uploaded = client.post(
+        f"/dashboard/api/stores/{store['id']}/khqr-images",
+        headers={"X-CSRF-Token": csrf},
+        files=[
+            ("files", ("selected-one.png", images[0], "image/png")),
+            ("files", ("selected-two.png", images[1], "image/png")),
+        ],
+    ).json()
+    second = uploaded["store"]["sources"][1]
+
+    manifest = client.get(
+        f"/dashboard/api/stores/{store['id']}/integration?source_id={second['id']}"
+    )
+    assert manifest.status_code == 200
+    assert manifest.json()["source_id"] == second["id"]
+    assert manifest.json()["currency"] == second["currency"]
+
+
+def test_bulk_invalid_qr_does_not_consume_default_source(monkeypatch, tmp_path):
+    use_asset_root(monkeypatch, tmp_path)
+    csrf = login()
+    store = create_store(csrf, "Bulk Invalid Store")
+    original_source_id = store["source"]["id"]
+
+    import io
+    import qrcode
+
+    bad_image = qrcode.make("not-khqr")
+    output = io.BytesIO()
+    bad_image.save(output, format="PNG")
+    good_image = khqr_png_bytes(
+        account_id="bulk-good@aba",
+        merchant_name="Bulk Good",
+    )
+    result = client.post(
+        f"/dashboard/api/stores/{store['id']}/khqr-images",
+        headers={"X-CSRF-Token": csrf},
+        files=[
+            ("files", ("bad.png", output.getvalue(), "image/png")),
+            ("files", ("good.png", good_image, "image/png")),
+        ],
+    )
+    assert result.status_code == 200
+    body = result.json()
+    assert len(body["errors"]) == 1
+    assert len(body["created"]) == 1
+    assert body["created"][0]["id"] == original_source_id
+    assert body["store"]["source_count"] == 1
+    assert body["store"]["source"]["khqr_account_id"] == "bulk-good@aba"

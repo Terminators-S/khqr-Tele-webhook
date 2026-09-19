@@ -164,6 +164,27 @@
             <span id="paymentStepBadge" class="pill">Not set</span>
           </div>
 
+          <div class="payment-source-toolbar">
+            <label>Payment QR account
+              <select id="setupSourceSelect"></select>
+            </label>
+            <button id="addPaymentQrButton" class="btn secondary" type="button">+ Add / bulk upload QR</button>
+          </div>
+          <p id="paymentSourceHelp" class="field-help">Each uploaded static KHQR becomes its own payment account for this store.</p>
+
+          <form id="bulkKhqrUploadForm" class="stack compact hidden" enctype="multipart/form-data">
+            <label class="upload-drop" for="bulkKhqrImages">
+              <input id="bulkKhqrImages" name="files" type="file" accept="image/png,image/jpeg,image/webp" multiple required />
+              <strong>Select one or many static KHQR images</strong>
+              <span>Up to 20 files · each valid QR creates/selects a payment account</span>
+            </label>
+            <p id="bulkKhqrSelected" class="field-help">The service validates every file and keeps the exact original image.</p>
+            <div class="form-actions">
+              <button id="bulkKhqrUploadButton" class="btn primary" type="submit">Upload payment QR(s)</button>
+              <button id="cancelBulkKhqrUpload" class="btn secondary" type="button">Cancel</button>
+            </div>
+          </form>
+
           <form id="khqrUploadForm" class="stack compact" enctype="multipart/form-data">
             <label class="upload-drop" for="khqrImageInput">
               <input id="khqrImageInput" name="file" type="file" accept="image/png,image/jpeg,image/webp" required />
@@ -454,10 +475,24 @@ docker compose --profile telegram up -d telegram</pre>
               </div>
               <div id="acceptanceTimeline" class="checklist"></div>
               <div id="acceptanceResult" class="acceptance-result hidden"></div>
+
+              <form id="acceptanceRecoveryForm" class="recovery-box stack compact hidden">
+                <div>
+                  <p class="eyebrow">PAID BUT NOT VERIFIED?</p>
+                  <h3>Find the payment by ABA Trx ID</h3>
+                  <p class="muted">Paste the transaction ID from ABA. We will search only the trusted Telegram payment group and explain why the payment did or did not match.</p>
+                </div>
+                <label>ABA Transaction ID
+                  <input id="acceptanceRecoveryTrx" name="trx_id" autocomplete="off" placeholder="1789..." />
+                </label>
+                <button id="acceptanceRecoverButton" class="btn secondary" type="submit">Find paid transaction</button>
+              </form>
+
               <div class="field-row acceptance-actions">
                 <button id="acceptanceCheckNow" class="btn primary" type="button">Check now</button>
                 <button id="acceptanceCancel" class="btn secondary" type="button">Cancel</button>
               </div>
+              <button id="acceptanceNewTest" class="btn primary hidden" type="button">Start new test</button>
             </article>
           </div>
         </section>

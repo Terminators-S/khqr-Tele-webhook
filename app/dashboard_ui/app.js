@@ -14,7 +14,7 @@ const state = {
   acceptanceSources: [],
   acceptance: null,
   selectedStoreId: sessionStorage.getItem("khqr_selected_store") || "",
-  selectedSourceId: "",
+  selectedSourceId: sessionStorage.getItem("khqr_selected_source") || "",
   creatingStore: false,
   replacingKhqr: false,
   telegramAuthStep: "phone",
@@ -151,19 +151,26 @@ function primaryBusiness() {
   return state.businesses.find(row => row.is_active) || state.businesses[0] || null;
 }
 
+function storeSources(store) {
+  if (!store) return [];
+  if (Array.isArray(store.sources) && store.sources.length) return store.sources;
+  return store.source ? [store.source] : [];
+}
+
 function primarySource() {
   const store = selectedStore();
-  if (store && store.source) return store.source;
+  if (!store) return null;
+  const rows = storeSources(store);
   if (state.selectedSourceId) {
-    const selected = state.sources.find(row => row.id === state.selectedSourceId);
+    const selected = rows.find(row => row.id === state.selectedSourceId);
     if (selected) return selected;
   }
-  return state.sources[0] || null;
+  return rows[0] || null;
 }
 
 function setupState() {
   const business = selectedStore();
-  const source = business && business.source ? business.source : null;
+  const source = primarySource();
   const storeReady = Boolean(business);
   const paymentReady = Boolean(source && source.khqr_valid && source.khqr_image_configured);
   const telegramAccountReady = Boolean(
@@ -319,7 +326,7 @@ function renderStoreSetup() {
   form.dataset.mode = "edit";
   if (form.dataset.renderedStore !== store.id || form.dataset.renderedMode !== "edit") {
     form.elements.name.value = store.name || "";
-    form.elements.currency.value = (store.source && store.source.currency) || "USD";
+    form.elements.currency.value = (primarySource() && primarySource().currency) || "USD";
     form.elements.webhook_url.value = store.webhook_url || "";
     form.dataset.renderedStore = store.id;
     form.dataset.renderedMode = "edit";
@@ -328,26 +335,46 @@ function renderStoreSetup() {
   $("cancelStoreEdit").classList.add("hidden");
   ready.classList.remove("hidden");
   ready.innerHTML = '<div><span class="pill good">Selected</span><h3>' +
-    esc(store.name) + '</h3><p class="muted">You can edit this store or create another one.</p></div>';
+    esc(store.name) + '</h3><p class="muted">' +
+    esc(storeSources(store).length + " payment QR account(s) · you can add more without creating another store.") +
+    '</p></div>';
   $("storeStepBadge").textContent = "Ready";
   $("storeStepBadge").className = "pill good";
 }
 
 function renderPaymentSetup() {
   const store = selectedStore();
-  const source = store && store.source ? store.source : null;
+  const sources = storeSources(store);
+  const source = primarySource();
   const form = $("khqrUploadForm");
   const preview = $("paymentPreview");
   const ready = Boolean(source && source.khqr_valid && source.khqr_image_configured);
+  const sourceSelect = $("setupSourceSelect");
+
+  $("addPaymentQrButton").disabled = !store;
+  sourceSelect.disabled = !sources.length;
+  if (sources.length) {
+    sourceSelect.innerHTML = sources.map(row => {
+      const suffix = row.khqr_valid ? " · ready QR" : " · needs QR";
+      return '<option value="' + esc(row.id) + '">' + esc(row.name + suffix) + "</option>";
+    }).join("");
+    if (source && sources.some(row => row.id === source.id)) sourceSelect.value = source.id;
+    $("paymentSourceHelp").textContent = sources.length +
+      " payment QR account" + (sources.length === 1 ? "" : "s") +
+      " in this store. Select one to configure its QR and Telegram group.";
+  } else {
+    sourceSelect.innerHTML = '<option value="">No payment QR accounts</option>';
+    $("paymentSourceHelp").textContent = "Create a store, then add one or many real static KHQR images.";
+  }
 
   Array.from(form.elements).forEach(el => { el.disabled = !source; });
 
   if (!source) {
     form.classList.remove("hidden");
     preview.classList.add("hidden");
-    $("paymentStepBadge").textContent = "Create store first";
+    $("paymentStepBadge").textContent = store ? "Add payment QR" : "Create store first";
     $("paymentStepBadge").className = "pill warn";
-    $("khqrSelectedFile").textContent = "Create or select a store before uploading KHQR.";
+    $("khqrSelectedFile").textContent = "Add a payment QR account or bulk upload static KHQR images.";
     return;
   }
 
@@ -574,8 +601,10 @@ async function loadIntegration() {
     renderIntegration();
     return;
   }
+  const source = primarySource();
   state.integration = await api(
-    "/dashboard/api/stores/" + encodeURIComponent(store.id) + "/integration"
+    "/dashboard/api/stores/" + encodeURIComponent(store.id) + "/integration" +
+    (source ? "?source_id=" + encodeURIComponent(source.id) : "")
   );
   renderIntegration();
 }
@@ -588,7 +617,7 @@ async function saveIntegrationWebhook(form) {
     method: "POST",
     body: JSON.stringify({
       name: store.name,
-      currency: (store.source && store.source.currency) || "USD",
+      currency: (primarySource() && primarySource().currency) || "USD",
       webhook_url: webhookUrl,
     }),
   });
@@ -744,9 +773,9 @@ function renderAdvanced() {
 }
 
 function acceptanceSourcesForStore() {
-  const source = primarySource();
-  if (!source) return [];
-  return state.acceptanceSources.filter(row => row.source_id === source.id);
+  const ids = new Set(storeSources(selectedStore()).map(row => row.id));
+  if (!ids.size) return [];
+  return state.acceptanceSources.filter(row => ids.has(row.source_id));
 }
 
 function selectedAcceptanceSource() {
@@ -775,7 +804,7 @@ function renderAcceptanceSetup() {
   ).join("");
   if (rows.some(row => row.source_id === previous)) {
     select.value = previous;
-  } else if (primarySource()) {
+  } else if (primarySource() && rows.some(row => row.source_id === primarySource().id)) {
     select.value = primarySource().id;
   }
 
@@ -814,6 +843,20 @@ function acceptanceResultKind(result) {
   return "warn";
 }
 
+function acceptanceReasonLabel(reason) {
+  const labels = {
+    remark_currency_mismatch: "The payment currency did not match this test.",
+    remark_belongs_to_other_request: "That payment note belongs to another payment request.",
+    remark_amount_conflict: "The payment note matched, but the amount conflicts with another active request.",
+    unknown_or_wrong_remark: "The payment arrived with a different or unknown Remark.",
+    ambiguous_amount_match: "The amount could belong to more than one active payment request.",
+    no_safe_match: "The payment was seen, but neither the exact Remark nor a unique amount safely identified this test.",
+    match_window_expired: "The automatic match window expired. You can still search an exact ABA Trx ID below.",
+    operator_cancelled: "The test was cancelled by the operator.",
+  };
+  return labels[reason] || String(reason || "Waiting for a safe match.").replaceAll("_", " ");
+}
+
 function renderAcceptanceLive() {
   const test = state.acceptance;
   if (!test) {
@@ -845,7 +888,7 @@ function renderAcceptanceLive() {
     checkRow(true, "Test payment created", "QR, exact amount and payment note are ready") +
     checkRow(observed, "Bank notification received", observed ? "Telegram saw the real payment" : "Waiting for your payment") +
     checkRow(observed, "ABA notification recognized", observed ? "Trusted notification confirmed" : "Waiting") +
-    checkRow(verified, "Amount + note matched", verified ? "This payment belongs to this test" : (test.result_reason || "Waiting")) +
+    checkRow(verified, "Amount + note matched", verified ? "This payment belongs to this test" : acceptanceReasonLabel(test.result_reason)) +
     checkRow(Boolean(test.would_status), "Final check",
       test.would_status === "PAID" ? "Would be accepted as paid" :
       test.would_status ? "Would be " + test.would_status : "Waiting");
@@ -855,27 +898,38 @@ function renderAcceptanceLive() {
     resultBox.classList.add("hidden");
   } else {
     let title = "Test result";
-    let detail = test.result_reason || "";
+    let detail = acceptanceReasonLabel(test.result_reason);
     if (result === "VERIFIED") {
       title = "PASS — payment verification works";
-      detail = "The real bank notification matched the exact amount and payment note. Your live store is still off.";
+      detail = test.recovery_method === "trx_id"
+        ? "The exact ABA transaction was found by Trx ID and then safely matched to this test. Your live store is still off."
+        : "The real bank notification matched the exact amount and payment note. Your live store is still off.";
     } else if (result === "MISMATCH") {
       title = "Payment seen, but it did not match safely";
-      detail = "Check the exact amount and payment note. The test will keep watching during the grace window.";
     } else if (result === "EXPIRED") {
-      title = "Test expired";
-      detail = "Create a new test and pay within the timer.";
+      title = "Automatic test window expired";
     } else if (result === "CANCELLED") {
       title = "Test cancelled";
       detail = "No live store action was taken.";
     }
-    resultBox.innerHTML = "<strong>" + esc(title) + "</strong><span>" + esc(detail) + "</span>";
+    const observedDetail = observed
+      ? " Observed: " + money(test.observed_amount_minor, test.currency) +
+        (test.trx_tail ? " · Trx …" + test.trx_tail : "") +
+        (test.observed_remark ? " · Remark " + test.observed_remark : "")
+      : "";
+    resultBox.innerHTML = "<strong>" + esc(title) + "</strong><span>" +
+      esc(detail + observedDetail) + "</span>";
     resultBox.className = "acceptance-result " + acceptanceResultKind(result);
   }
 
   const terminal = acceptanceTerminal(result);
-  $("acceptanceCheckNow").disabled = terminal;
-  $("acceptanceCancel").disabled = terminal;
+  const recoverable = result === "MISMATCH" || result === "EXPIRED";
+  $("acceptanceRecoveryForm").classList.toggle("hidden", !recoverable);
+  $("acceptanceCheckNow").classList.toggle("hidden", terminal);
+  $("acceptanceCancel").classList.toggle("hidden", terminal);
+  $("acceptanceCheckNow").disabled = false;
+  $("acceptanceCancel").disabled = false;
+  $("acceptanceNewTest").classList.toggle("hidden", !terminal);
   updateAcceptanceClock();
 }
 
@@ -941,11 +995,20 @@ async function refreshAll() {
       sessionStorage.setItem("khqr_selected_store", state.selectedStoreId);
     }
     const currentStore = selectedStore();
-    state.selectedSourceId = currentStore && currentStore.source
-      ? currentStore.source.id
-      : "";
+    const currentSources = storeSources(currentStore);
+    if (!state.selectedSourceId || !currentSources.some(row => row.id === state.selectedSourceId)) {
+      state.selectedSourceId = currentSources.length ? currentSources[0].id : "";
+    }
+    if (state.selectedSourceId) {
+      sessionStorage.setItem("khqr_selected_source", state.selectedSourceId);
+    } else {
+      sessionStorage.removeItem("khqr_selected_source");
+    }
     state.integration = currentStore
-      ? await api("/dashboard/api/stores/" + encodeURIComponent(currentStore.id) + "/integration")
+      ? await api(
+          "/dashboard/api/stores/" + encodeURIComponent(currentStore.id) +
+          "/integration" + (state.selectedSourceId ? "?source_id=" + encodeURIComponent(state.selectedSourceId) : "")
+        )
       : null;
 
     renderGlobalStoreSelector();
@@ -1032,14 +1095,81 @@ function selectStore(storeId) {
   state.selectedStoreId = storeId;
   sessionStorage.setItem("khqr_selected_store", storeId);
   const store = selectedStore();
-  state.selectedSourceId = store && store.source ? store.source.id : "";
+  const sources = storeSources(store);
+  state.selectedSourceId = sources.length ? sources[0].id : "";
+  if (state.selectedSourceId) sessionStorage.setItem("khqr_selected_source", state.selectedSourceId);
   $("storeForm").dataset.renderedStore = "";
   $("storeForm").dataset.renderedMode = "";
+  $("bulkKhqrUploadForm").classList.add("hidden");
   renderHome();
   renderSetup();
   renderIntegration();
   renderAcceptanceSetup();
   loadIntegration().catch(error => notice(error.message || String(error), true));
+}
+
+function selectPaymentSource(sourceId) {
+  const store = selectedStore();
+  const sources = storeSources(store);
+  if (!sources.some(row => row.id === sourceId)) return;
+  state.selectedSourceId = sourceId;
+  state.replacingKhqr = false;
+  sessionStorage.setItem("khqr_selected_source", sourceId);
+  $("bulkKhqrUploadForm").classList.add("hidden");
+  renderHome();
+  renderSetup();
+  renderIntegration();
+  renderAcceptanceSetup();
+  renderActivity();
+  loadIntegration().catch(error => notice(error.message || String(error), true));
+}
+
+function showBulkKhqrUpload() {
+  if (!selectedStore()) throw new Error("Create or select a store first.");
+  const form = $("bulkKhqrUploadForm");
+  form.classList.remove("hidden");
+  $("bulkKhqrImages").focus();
+}
+
+async function uploadBulkKhqrImages(form) {
+  const store = selectedStore();
+  if (!store) throw new Error("Create or select a store first.");
+  const input = $("bulkKhqrImages");
+  const files = Array.from(input.files || []);
+  if (!files.length) throw new Error("Choose one or more static KHQR images.");
+  if (files.length > 20) throw new Error("Choose at most 20 KHQR images at once.");
+
+  const data = new FormData();
+  files.forEach(file => data.append("files", file));
+  $("bulkKhqrUploadButton").disabled = true;
+  $("bulkKhqrUploadButton").textContent = "Validating QR images…";
+  try {
+    const result = await api(
+      "/dashboard/api/stores/" + encodeURIComponent(store.id) + "/khqr-images",
+      { method: "POST", body: data }
+    );
+    if (result.created && result.created.length) {
+      state.selectedSourceId = result.created[result.created.length - 1].id;
+      sessionStorage.setItem("khqr_selected_source", state.selectedSourceId);
+    }
+    form.reset();
+    form.classList.add("hidden");
+    const createdCount = (result.created || []).length;
+    const errors = result.errors || [];
+    if (errors.length) {
+      notice(
+        createdCount + " QR account(s) added; " + errors.length +
+        " file(s) rejected. First error: " + errors[0].filename + " — " + errors[0].error,
+        true
+      );
+    } else {
+      notice(createdCount + " payment QR account(s) added and verified.");
+    }
+    await refreshAll();
+  } finally {
+    $("bulkKhqrUploadButton").disabled = false;
+    $("bulkKhqrUploadButton").textContent = "Upload payment QR(s)";
+  }
 }
 
 async function uploadKhqrImage(form) {
@@ -1258,25 +1388,67 @@ async function scanAcceptance(silent) {
   if (!state.acceptance || acceptanceTerminal(state.acceptance.result)) return;
   const button = $("acceptanceCheckNow");
   button.disabled = true;
+  button.textContent = "Checking Telegram…";
   try {
     state.acceptance = await api(
       "/dashboard/api/acceptance-tests/" +
       encodeURIComponent(state.acceptance.intent_id) + "/scan",
-      { method: "POST", body: JSON.stringify({ limit: 160 }) }
+      { method: "POST", body: JSON.stringify({ limit: 300 }) }
     );
     renderAcceptanceLive();
     if (acceptanceTerminal(state.acceptance.result)) {
       stopAcceptanceLoops();
       await refreshAll();
       if (!silent) notice("Payment test finished.");
+    } else if (!silent) {
+      notice(state.acceptance.result === "MISMATCH"
+        ? "Payment notification found, but it needs review. Use the Trx ID recovery section if needed."
+        : "Checked Telegram. Still waiting for a matching payment.");
     }
   } catch (error) {
     if (!silent) notice(error.message || String(error), true);
   } finally {
-    if (state.acceptance && !acceptanceTerminal(state.acceptance.result)) {
-      button.disabled = false;
-    }
+    button.textContent = "Check now";
+    button.disabled = false;
   }
+}
+
+async function recoverAcceptanceByTrx(form) {
+  if (!state.acceptance) throw new Error("Start or restore a payment test first.");
+  const trxId = String(new FormData(form).get("trx_id") || "").trim();
+  if (trxId.length < 6) throw new Error("Enter the ABA transaction ID.");
+  const button = $("acceptanceRecoverButton");
+  button.disabled = true;
+  button.textContent = "Searching trusted Telegram history…";
+  try {
+    state.acceptance = await api(
+      "/dashboard/api/acceptance-tests/" +
+      encodeURIComponent(state.acceptance.intent_id) + "/recover",
+      { method: "POST", body: JSON.stringify({ trx_id: trxId }) }
+    );
+    renderAcceptanceLive();
+    if (state.acceptance.result === "VERIFIED") {
+      stopAcceptanceLoops();
+      await refreshAll();
+      notice("Transaction found and safely verified by exact Trx ID lookup.");
+    } else {
+      notice("Transaction found, but it still does not safely match this test. Review the reason shown above.", true);
+    }
+  } finally {
+    button.disabled = false;
+    button.textContent = "Find paid transaction";
+  }
+}
+
+function startNewAcceptanceTest() {
+  stopAcceptanceLoops();
+  sessionStorage.removeItem("khqr_acceptance_intent");
+  state.acceptance = null;
+  $("acceptanceRecoveryForm").reset();
+  $("acceptanceLive").classList.add("hidden");
+  renderAcceptanceSetup();
+  $("acceptanceSetup").scrollIntoView({ behavior: "smooth", block: "start" });
+  notice("Ready for a new real payment test.");
 }
 
 async function cancelAcceptance() {
@@ -1420,6 +1592,35 @@ $("setupStoreSelect").addEventListener("change", event => {
 $("newStoreButton").addEventListener("click", beginNewStore);
 $("cancelStoreEdit").addEventListener("click", cancelNewStore);
 
+$("setupSourceSelect").addEventListener("change", event => {
+  selectPaymentSource(event.target.value);
+});
+
+$("addPaymentQrButton").addEventListener("click", () => {
+  try { showBulkKhqrUpload(); }
+  catch (error) { notice(error.message || String(error), true); }
+});
+
+$("cancelBulkKhqrUpload").addEventListener("click", () => {
+  $("bulkKhqrUploadForm").reset();
+  $("bulkKhqrUploadForm").classList.add("hidden");
+  $("bulkKhqrSelected").textContent = "The service validates every file and keeps the exact original image.";
+});
+
+$("bulkKhqrImages").addEventListener("change", event => {
+  const files = Array.from(event.target.files || []);
+  const totalKb = Math.max(1, Math.round(files.reduce((sum, file) => sum + file.size, 0) / 1024));
+  $("bulkKhqrSelected").textContent = files.length
+    ? files.length + " file(s) selected · " + totalKb + " KB total"
+    : "The service validates every file and keeps the exact original image.";
+});
+
+$("bulkKhqrUploadForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  try { await uploadBulkKhqrImages(event.currentTarget); }
+  catch (error) { notice(error.message || String(error), true); }
+});
+
 $("khqrImageInput").addEventListener("change", event => {
   const file = event.target.files && event.target.files[0];
   $("khqrSelectedFile").textContent = file
@@ -1507,6 +1708,14 @@ $("acceptanceStartForm").addEventListener("submit", async event => {
 $("acceptanceCheckNow").addEventListener("click", async () => {
   await scanAcceptance(false);
 });
+
+$("acceptanceRecoveryForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  try { await recoverAcceptanceByTrx(event.currentTarget); }
+  catch (error) { notice(error.message || String(error), true); }
+});
+
+$("acceptanceNewTest").addEventListener("click", startNewAcceptanceTest);
 
 $("acceptanceCancel").addEventListener("click", async () => {
   try { await cancelAcceptance(); }

@@ -306,3 +306,143 @@ def test_acceptance_cancel_releases_reservation(
         )
     )
     assert after == 0
+
+
+def test_acceptance_recovery_finds_exact_trx_and_stays_shadow(db, monkeypatch, tmp_path):
+    authorize_session(monkeypatch, tmp_path)
+    _business, source, _image = create_disabled_source(db, monkeypatch, tmp_path)
+    csrf = login()
+    started = client.post(
+        "/dashboard/api/acceptance-tests/start",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "source_id": source.id,
+            "amount_minor": 140,
+            "confirm": "SEND REAL TEST MONEY",
+        },
+    ).json()
+
+    amount = started["payable_amount_minor"] / 100
+    trx = "178900000099777"
+    message = aba_message(
+        777,
+        777001,
+        f"{amount:.2f}",
+        started["remark"],
+        trx,
+    )
+    fake = FakeTelegramClient([message])
+    telegram_session_path = tmp_path / "khqr_collector.session"
+    telegram_session_path.write_bytes(b"session")
+
+    async def fake_connect():
+        fake.is_connected = True
+        return fake, telegram_session_path, True, 123
+
+    monkeypatch.setattr(acceptance, "_connect_authorized", fake_connect)
+
+    recovered = client.post(
+        f"/dashboard/api/acceptance-tests/{started['intent_id']}/recover",
+        headers={"X-CSRF-Token": csrf},
+        json={"trx_id": trx},
+    )
+    assert recovered.status_code == 200
+    body = recovered.json()
+    assert body["result"] == "VERIFIED"
+    assert body["recovery_method"] == "trx_id"
+    assert body["trx_tail"] == trx[-8:]
+
+    evidence = db.scalar(
+        select(models.PaymentEvidence).where(
+            models.PaymentEvidence.source_id == source.id,
+            models.PaymentEvidence.trx_id == trx,
+        )
+    )
+    assert evidence is not None
+    assert evidence.state == "SHADOW"
+    assert (db.scalar(select(func.count(models.PaymentAllocation.id))) or 0) == 0
+    assert (db.scalar(select(func.count(models.WebhookOutbox.id))) or 0) == 0
+
+
+def test_acceptance_mismatch_can_be_cancelled(db, monkeypatch, tmp_path):
+    authorize_session(monkeypatch, tmp_path)
+    _business, source, _image = create_disabled_source(db, monkeypatch, tmp_path)
+    csrf = login()
+    started = client.post(
+        "/dashboard/api/acceptance-tests/start",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "source_id": source.id,
+            "amount_minor": 155,
+            "confirm": "SEND REAL TEST MONEY",
+        },
+    ).json()
+
+    amount = started["payable_amount_minor"] / 100
+    wrong_remark_message = aba_message(
+        778,
+        777001,
+        f"{amount:.2f}",
+        "WRONGREMARK",
+        "178900000099778",
+    )
+    fake = FakeTelegramClient([wrong_remark_message])
+    telegram_session_path = tmp_path / "khqr_collector.session"
+    telegram_session_path.write_bytes(b"session")
+
+    async def fake_connect():
+        fake.is_connected = True
+        return fake, telegram_session_path, True, 123
+
+    monkeypatch.setattr(acceptance, "_connect_authorized", fake_connect)
+    mismatch = client.post(
+        f"/dashboard/api/acceptance-tests/{started['intent_id']}/scan",
+        headers={"X-CSRF-Token": csrf},
+        json={"limit": 20},
+    )
+    assert mismatch.status_code == 200
+    assert mismatch.json()["result"] == "MISMATCH"
+
+    cancelled = client.post(
+        f"/dashboard/api/acceptance-tests/{started['intent_id']}/cancel",
+        headers={"X-CSRF-Token": csrf},
+        json={},
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["result"] == "CANCELLED"
+
+
+def test_expired_recovery_stays_expired_when_trx_still_mismatches(db, monkeypatch, tmp_path):
+    authorize_session(monkeypatch, tmp_path)
+    _business, source, _image = create_disabled_source(db, monkeypatch, tmp_path)
+    csrf = login()
+    started = client.post(
+        "/dashboard/api/acceptance-tests/start",
+        headers={"X-CSRF-Token": csrf},
+        json={"source_id": source.id, "amount_minor": 165, "confirm": "SEND REAL TEST MONEY"},
+    ).json()
+    intent = db.get(models.PaymentIntent, started["intent_id"])
+    acceptance._save_result(db, intent, result="EXPIRED", result_reason="match_window_expired")
+
+    amount = started["payable_amount_minor"] / 100
+    trx = "178900000099779"
+    message = aba_message(779, 777001, f"{amount:.2f}", "WRONGREMARK", trx)
+    fake = FakeTelegramClient([message])
+    session_path = tmp_path / "khqr_collector.session"
+    session_path.write_bytes(b"session")
+
+    async def fake_connect():
+        fake.is_connected = True
+        return fake, session_path, True, 123
+
+    monkeypatch.setattr(acceptance, "_connect_authorized", fake_connect)
+    recovered = client.post(
+        f"/dashboard/api/acceptance-tests/{started['intent_id']}/recover",
+        headers={"X-CSRF-Token": csrf},
+        json={"trx_id": trx},
+    )
+    assert recovered.status_code == 200
+    body = recovered.json()
+    assert body["result"] == "EXPIRED"
+    assert body["result_reason"] == "unknown_or_wrong_remark"
+    assert body["recovery_method"] == "trx_id"
