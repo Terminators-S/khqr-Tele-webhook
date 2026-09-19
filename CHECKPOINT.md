@@ -64,7 +64,11 @@
 - Dedicated account currently exposes only 11 history messages in that group, so 3 payments are the full visible parity sample at this checkpoint.
 - Full isolated PostgreSQL suite after peer-cache warmup: 48/48 PASS.
 - Full isolated PostgreSQL suite after SHADOW timestamp/parity artifact update: 48/48 PASS.
+- Reproducible read-only Creative Studio parity exporter added; live regeneration reproduced 3/3 Trx, amount, time, and source parity with 0.000s max delta and no incumbent writes/raw payment output.
+- Fail-closed cutover preflight added with default minimum of 10 verified SHADOW payments plus a passing parity artifact; it never changes source state or cutover fuses.
+- Current cutover preflight intentionally BLOCKED: 3 observed vs 10 required, and parity sample 3 vs 10 required; state_changes=none.
+- Cutover preflight focused tests: 2/2 PASS on isolated PostgreSQL; full suite with cutover + parity exporter gates: 52/52 PASS.
 - Telegram API credentials are configured; TELEGRAM_SHADOW_ONLY=true, ALLOW_LIVE_TELEGRAM=false, ALLOW_SHADOW_PROMOTION=false.
 
 ## Next task
-Keep Creative Studio authoritative and the standalone source disabled. Expand SHADOW parity when more payment notifications become visible/arrive, then prepare the explicit cutover runbook and rollback gate. Do not enable the source, ALLOW_SHADOW_PROMOTION, or ALLOW_LIVE_TELEGRAM without a separate approved cutover decision.
+Keep Creative Studio authoritative and the standalone source disabled. Collect at least 7 more trusted SHADOW payments, rerun `make shadow-observe`, `make creative-parity`, and `make cutover-preflight`, then prepare the explicit approved cutover/rollback execution. Do not enable the source, ALLOW_SHADOW_PROMOTION, or ALLOW_LIVE_TELEGRAM without a separate approved cutover decision.

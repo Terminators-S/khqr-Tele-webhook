@@ -92,14 +92,43 @@ make shadow-observe SOURCE_ID="<staged-source-id>"
 
 This gate accepts only the configured sender, ignores unrelated/unparseable
 messages, writes matched notifications as `SHADOW`, never promotes or settles
-them, and exits after the bounded replay. Review the owner-only observation
-artifact and compare Trx ID, amount, time, and source parity with the incumbent
-Creative Studio history.
+them, and exits after the bounded replay.
 
-### 4. Enable only at an approved cutover
+Regenerate the incumbent parity artifact with the read-only Creative Studio
+migration checker:
 
-Only after sender discovery and SHADOW parity are accepted should activation be
-considered:
+```bash
+make creative-parity
+```
+
+It queries only matching transaction IDs from Creative Studio, emits no raw
+payment contents, and writes aggregate Trx/amount/time/source parity to
+`runtime/creative-studio-parity.json` with mode `0600`.
+
+### 4. Pass the fail-closed cutover preflight
+
+Before any activation, run:
+
+```bash
+make cutover-preflight SOURCE_ID="<staged-source-id>"
+```
+
+The default gate requires at least 10 SHADOW payments plus a passing
+`runtime/creative-studio-parity.json`. It also verifies that the dedicated
+session is owner-only, both live cutover fuses remain off, the source is still
+disabled but fully configured, all observed evidence remains SHADOW, and no
+payment allocations exist. The command never changes source state or fuses.
+
+For a stricter release gate, increase the threshold explicitly:
+
+```bash
+make cutover-preflight SOURCE_ID="<staged-source-id>" MIN_SHADOW=20
+```
+
+### 5. Enable only at an approved cutover
+
+Only after sender discovery, SHADOW parity, and the cutover preflight are all
+accepted should activation be considered:
 
 ```text
 POST /internal/sources/{source_id}/enabled

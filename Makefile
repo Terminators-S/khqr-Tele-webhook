@@ -1,4 +1,4 @@
-.PHONY: test rc-gate deploy-core stop-core integration-smoke sender-discovery shadow-observe shadow-preflight
+.PHONY: test rc-gate deploy-core stop-core integration-smoke sender-discovery shadow-observe creative-parity cutover-preflight shadow-preflight
 
 test:
 	.venv/bin/pytest -q
@@ -22,6 +22,13 @@ sender-discovery:
 shadow-observe:
 	@test -n "$(SOURCE_ID)" || (echo "SOURCE_ID is required" >&2; exit 2)
 	.venv/bin/python scripts/telegram_shadow_observe.py --source-id "$(SOURCE_ID)"
+
+creative-parity:
+	.venv/bin/python scripts/creative_studio_parity.py
+
+cutover-preflight:
+	@test -n "$(SOURCE_ID)" || (echo "SOURCE_ID is required" >&2; exit 2)
+	.venv/bin/python scripts/cutover_preflight.py --source-id "$(SOURCE_ID)" --min-shadow "$(or $(MIN_SHADOW),10)"
 
 shadow-preflight:
 	.venv/bin/python scripts/telegram_shadow_preflight.py

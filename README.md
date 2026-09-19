@@ -25,7 +25,8 @@ Production is four separable processes sharing PostgreSQL: API, settlement worke
 6. Give the returned API key to the client project; it is shown only once.
 7. Run `scripts/integration_smoke.py` to prove SDK intent → synthetic evidence → settlement → signed webhook without real money.
 8. Create a dedicated Telegram session under `runtime/`, run read-only sender discovery, then configure the observed sender while the source stays disabled.
-9. Run the bounded one-shot SHADOW observation and review parity before any activation.
-10. At a later approved activation, run `scripts/telegram_shadow_preflight.py` before starting the long-running `telegram` profile. Both cutover fuses are safe by default.
+9. Run the bounded one-shot SHADOW observation, then regenerate Creative Studio parity with `make creative-parity`.
+10. Run the fail-closed cutover preflight; its default minimum is 10 verified SHADOW payments.
+11. At a later approved activation, run `scripts/telegram_shadow_preflight.py` before starting the long-running `telegram` profile. Both cutover fuses are safe by default.
 
 See `docs/CLIENT_ONBOARDING.md` for client setup and the no-money smoke, and `docs/IMPORT_FROM_CREATIVE_STUDIO.md` for the extraction boundary.
