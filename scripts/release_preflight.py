@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, make_url, text
 
 from app import __version__
 from app.config import get_settings
+from app.telegram_credentials import load_telegram_credentials
 
 
 LOCKED = {
@@ -73,7 +74,7 @@ def main() -> int:
         except Exception as exc:
             errors.append(f"PostgreSQL connectivity failed: {type(exc).__name__}")
 
-    if not settings.telegram_api_id or not settings.telegram_api_hash:
+    if not load_telegram_credentials():
         warnings.append("Telegram API credentials missing; core release is still allowed")
 
     if errors:

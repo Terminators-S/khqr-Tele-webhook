@@ -1,4 +1,10 @@
-.PHONY: test rc-gate deploy-core stop-core integration-smoke sender-discovery shadow-observe creative-parity cutover-preflight shadow-preflight
+.PHONY: bootstrap install test rc-gate deploy-core stop-core integration-smoke sender-discovery shadow-observe creative-parity cutover-preflight shadow-preflight
+
+bootstrap:
+	python3 scripts/bootstrap_open_source.py
+
+install:
+	./scripts/install.sh
 
 test:
 	.venv/bin/pytest -q

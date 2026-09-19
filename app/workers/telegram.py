@@ -7,6 +7,7 @@ from sqlalchemy import select, text
 from .. import core, models
 from ..config import get_settings
 from ..db import SessionLocal, engine
+from ..telegram_credentials import load_telegram_credentials
 from ..telegram_session import session_location
 
 
@@ -89,8 +90,9 @@ async def _history_replay(client, sources):
 
 async def run() -> None:
     settings = get_settings()
-    if not settings.telegram_api_id or not settings.telegram_api_hash:
-        raise RuntimeError("TELEGRAM_API_ID and TELEGRAM_API_HASH are required")
+    credentials = load_telegram_credentials()
+    if not credentials:
+        raise RuntimeError("Telegram API credentials are required")
     if not settings.telegram_shadow_only and not settings.allow_live_telegram:
         raise RuntimeError("live Telegram mode is blocked; set ALLOW_LIVE_TELEGRAM=true only at approved cutover")
 
@@ -108,8 +110,8 @@ async def run() -> None:
     _session_path, client_name, workdir = session_location(settings.telegram_session_name)
     client = Client(
         client_name,
-        api_id=settings.telegram_api_id,
-        api_hash=settings.telegram_api_hash,
+        api_id=credentials.api_id,
+        api_hash=credentials.api_hash,
         workdir=str(workdir),
     )
 

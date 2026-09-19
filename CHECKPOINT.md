@@ -68,7 +68,17 @@
 - Fail-closed cutover preflight added with default minimum of 10 verified SHADOW payments plus a passing parity artifact; it never changes source state or cutover fuses.
 - Current cutover preflight intentionally BLOCKED: 3 observed vs 10 required, and parity sample 3 vs 10 required; state_changes=none.
 - Cutover preflight focused tests: 2/2 PASS on isolated PostgreSQL; full suite with cutover + parity exporter gates: 52/52 PASS.
+- Open-source dashboard added with signed HttpOnly admin sessions, CSRF mutation protection, first-run setup, businesses/sources, Telegram onboarding, evidence/intents, runtime health, and guarded source controls.
+- Dashboard supports owner-only runtime Telegram credentials plus environment override; collector/discovery/SHADOW preflight paths share the same credential resolver.
+- Linux/macOS and Windows bootstrap/install flows added; installation starts safe core services only and does not auto-start live Telegram.
+- Tailnet preview paired at https://exosme.tail607684.ts.net/dashboard without replacing existing Exosme routes.
+- Real Payment Acceptance dashboard flow added: configured disabled source only, USD $0.01-$5.00, exact cent fingerprint + Remark, 8-minute checkout + 5-minute grace, static KHQR QR display, trusted Telegram scan, production matcher preview.
+- Acceptance evidence is forced SHADOW; test requests produce no PaymentEvent/WebhookOutbox/PaymentAllocation and cannot fulfill or credit a customer.
+- Dashboard source activation now requires both the explicit ENABLE SOURCE phrase and a prior VERIFIED Real Payment Test; internal migration/cutover tooling remains separate.
+- Acceptance/dashboard focused gate: 7/7 PASS. Full isolated PostgreSQL regression after Real Test + activation guard: 64/64 PASS.
+- Dockerfile dependency layering optimized so app-only rebuilds reuse runtime dependency layers.
+- Staged Creative Studio source was found enabled during deployment smoke, was immediately disabled again, and remains disabled. Live Telegram and SHADOW promotion fuses remain false; 0 intents, 3 SHADOW evidence, 0 allocations.
 - Telegram API credentials are configured; TELEGRAM_SHADOW_ONLY=true, ALLOW_LIVE_TELEGRAM=false, ALLOW_SHADOW_PROMOTION=false.
 
 ## Next task
-Keep Creative Studio authoritative and the standalone source disabled. Collect at least 7 more trusted SHADOW payments, rerun `make shadow-observe`, `make creative-parity`, and `make cutover-preflight`, then prepare the explicit approved cutover/rollback execution. Do not enable the source, ALLOW_SHADOW_PROMOTION, or ALLOW_LIVE_TELEGRAM without a separate approved cutover decision.
+Run one small operator-initiated real payment through Dashboard → Real Test and confirm the live ABA/Telegram notification reaches VERIFIED with exact amount/Remark while source remains disabled and evidence stays SHADOW. After that, continue collecting SHADOW parity toward the separate 10-payment cutover gate. Do not enable the source, ALLOW_SHADOW_PROMOTION, or ALLOW_LIVE_TELEGRAM as part of the acceptance test.

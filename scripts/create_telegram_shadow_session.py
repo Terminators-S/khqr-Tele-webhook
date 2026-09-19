@@ -2,12 +2,14 @@ import asyncio
 import os
 
 from app.config import get_settings
+from app.telegram_credentials import load_telegram_credentials
 from app.telegram_session import session_location
 
 
 async def main() -> int:
     settings = get_settings()
-    if not settings.telegram_api_id or not settings.telegram_api_hash:
+    credentials = load_telegram_credentials()
+    if not credentials:
         print("Telegram API credentials are not configured.")
         return 1
     if not settings.telegram_shadow_only:
@@ -31,8 +33,8 @@ async def main() -> int:
     old_umask = os.umask(0o077)
     client = Client(
         client_name,
-        api_id=settings.telegram_api_id,
-        api_hash=settings.telegram_api_hash,
+        api_id=credentials.api_id,
+        api_hash=credentials.api_hash,
         workdir=str(workdir),
     )
     try:

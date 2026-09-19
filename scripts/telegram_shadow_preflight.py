@@ -5,6 +5,7 @@ from sqlalchemy import select
 from app import core, models
 from app.config import get_settings
 from app.db import SessionLocal
+from app.telegram_credentials import load_telegram_credentials
 from app.telegram_session import session_location
 
 
@@ -18,7 +19,7 @@ def main() -> int:
         errors.append("ALLOW_LIVE_TELEGRAM must remain false during shadow phase")
     if settings.allow_shadow_promotion:
         errors.append("ALLOW_SHADOW_PROMOTION must remain false during shadow phase")
-    if not settings.telegram_api_id or not settings.telegram_api_hash:
+    if not load_telegram_credentials():
         errors.append("Telegram API credentials are not configured")
 
     session_path, _client_name, _workdir = session_location(settings.telegram_session_name)

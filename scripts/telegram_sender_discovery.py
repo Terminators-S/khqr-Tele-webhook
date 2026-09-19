@@ -23,6 +23,7 @@ from app import models
 from app.config import get_settings
 from app.db import SessionLocal
 from app.parser import parse_aba_text
+from app.telegram_credentials import load_telegram_credentials
 from app.telegram_session import session_location
 
 
@@ -101,7 +102,8 @@ async def discover(source_id: str, limit: int) -> dict[str, Any]:
         raise RuntimeError("ALLOW_LIVE_TELEGRAM must remain false")
     if settings.allow_shadow_promotion:
         raise RuntimeError("ALLOW_SHADOW_PROMOTION must remain false")
-    if not settings.telegram_api_id or not settings.telegram_api_hash:
+    credentials = load_telegram_credentials()
+    if not credentials:
         raise RuntimeError("Telegram API credentials are not configured")
 
     session_path = _session_path()
@@ -124,8 +126,8 @@ async def discover(source_id: str, limit: int) -> dict[str, Any]:
     _session, client_name, workdir = session_location(settings.telegram_session_name)
     client = Client(
         client_name,
-        api_id=settings.telegram_api_id,
-        api_hash=settings.telegram_api_hash,
+        api_id=credentials.api_id,
+        api_hash=credentials.api_hash,
         workdir=str(workdir),
     )
     messages: list[Any] = []
