@@ -1,10 +1,11 @@
-from pathlib import Path
+import stat
 
 from sqlalchemy import select
 
 from app import core, models
 from app.config import get_settings
 from app.db import SessionLocal
+from app.telegram_session import session_location
 
 
 def main() -> int:
@@ -20,10 +21,11 @@ def main() -> int:
     if not settings.telegram_api_id or not settings.telegram_api_hash:
         errors.append("Telegram API credentials are not configured")
 
-    session_base = Path(settings.telegram_session_name).expanduser()
-    session_path = session_base if session_base.suffix == ".session" else Path(str(session_base) + ".session")
+    session_path, _client_name, _workdir = session_location(settings.telegram_session_name)
     if not session_path.exists():
         errors.append(f"dedicated Telegram session is missing: {session_path}")
+    elif stat.S_IMODE(session_path.stat().st_mode) & 0o077:
+        errors.append("dedicated Telegram session must be owner-only (0600)")
 
     db = SessionLocal()
     try:

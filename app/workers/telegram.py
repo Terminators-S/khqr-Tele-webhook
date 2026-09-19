@@ -7,6 +7,7 @@ from sqlalchemy import select, text
 from .. import core, models
 from ..config import get_settings
 from ..db import SessionLocal, engine
+from ..telegram_session import session_location
 
 
 log = logging.getLogger("khqr.telegram")
@@ -104,10 +105,12 @@ async def run() -> None:
         raise RuntimeError("no ready payment source lock acquired")
 
     source_by_group = {int(source.telegram_group_id): source for source in sources}
+    _session_path, client_name, workdir = session_location(settings.telegram_session_name)
     client = Client(
-        settings.telegram_session_name,
+        client_name,
         api_id=settings.telegram_api_id,
         api_hash=settings.telegram_api_hash,
+        workdir=str(workdir),
     )
 
 

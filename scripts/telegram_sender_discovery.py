@@ -23,6 +23,7 @@ from app import models
 from app.config import get_settings
 from app.db import SessionLocal
 from app.parser import parse_aba_text
+from app.telegram_session import session_location
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -31,8 +32,7 @@ RUNTIME_ROOT = (REPO_ROOT / "runtime").resolve()
 
 def _session_path() -> Path:
     settings = get_settings()
-    base = Path(settings.telegram_session_name).expanduser()
-    path = base if base.suffix == ".session" else Path(str(base) + ".session")
+    path, _client_name, _workdir = session_location(settings.telegram_session_name)
     resolved = path.resolve()
     if resolved.parent != RUNTIME_ROOT:
         raise RuntimeError("dedicated Telegram session must live directly under runtime/")
@@ -121,10 +121,12 @@ async def discover(source_id: str, limit: int) -> dict[str, Any]:
 
     from pyrogram import Client
 
+    _session, client_name, workdir = session_location(settings.telegram_session_name)
     client = Client(
-        settings.telegram_session_name,
+        client_name,
         api_id=settings.telegram_api_id,
         api_hash=settings.telegram_api_hash,
+        workdir=str(workdir),
     )
     messages: list[Any] = []
     try:

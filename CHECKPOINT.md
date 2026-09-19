@@ -32,7 +32,7 @@
 - Local RC gate from empty PostgreSQL volume: PASS.
 - Python wheel contains both server package and khqr_sdk: PASS.
 - Fresh loopback core deployment (API + PostgreSQL + settlement + webhook): healthy with clean database.
-- Telegram shadow preflight currently blocks only on missing dedicated standalone session.
+- Long-running Telegram preflight intentionally remains blocked while the dedicated session is missing and the staged source is disabled.
 - Reusable client onboarding command added; credentials are owner-only (0600) and secrets stay out of stdout.
 - No-money integration smoke PASS through the running API, settlement worker, and webhook worker: SDK intent -> synthetic RECEIVED evidence -> PAID -> verified signed webhook.
 - Client onboarding supports staged disabled sources when the trusted Telegram sender is not yet known.
@@ -46,10 +46,16 @@
 - Staged Creative Studio credentials are stored only under git-ignored runtime/ with mode 0600.
 - Read-only Telegram sender-discovery probe added for staged disabled sources; it cannot ingest evidence, mutate source state, enable payments, or promote SHADOW evidence.
 - Sender-discovery focused tests: 5/5 PASS on isolated PostgreSQL.
-- Full isolated PostgreSQL suite after sender-discovery slice: 41/41 PASS.
 - Missing-session fail-closed proof: discovery blocked with 0 intents and 0 evidence before/after.
-- Dedicated Telegram session path is locked to runtime/khqr_collector.session; session does not exist yet.
+- Pyrogram session path construction fixed to use separate client name/workdir; host and Docker absolute paths resolve to the same session filename contract.
+- Session bootstrap now enforces both cutover fuses off, runtime directory 0700, session file 0600, and re-validates authorization instead of trusting file existence.
+- Bootstrap reached the real Telegram phone prompt; the resulting partial file was verified unauthorized and removed.
+- One-shot staged SHADOW observer added; it requires the source to remain disabled, requires configured trusted sender, writes SHADOW only, and never promotes/settles.
+- Telegram migration focused tests (session path + sender discovery + SHADOW observer): 12/12 PASS.
+- Full isolated PostgreSQL suite after SHADOW-observer slice: 48/48 PASS.
+- PostgreSQL concurrency gates after SHADOW-observer slice: 30 DUAL + 70 overflow, one duplicate-settlement winner, 40/40 SKIP LOCKED exactly once.
+- Dedicated Telegram session path is locked to runtime/khqr_collector.session; no authorized session exists yet.
 - Telegram API credentials are configured; TELEGRAM_SHADOW_ONLY=true, ALLOW_LIVE_TELEGRAM=false, ALLOW_SHADOW_PROMOTION=false.
 
 ## Next task
-Bootstrap the dedicated standalone Telegram session under runtime/ through the secure terminal login prompt. Then run the read-only sender-discovery probe against the staged Creative Studio source, review sender unanimity and historical Trx/amount/time parity, and configure the observed sender through the guarded internal endpoint. Keep the source disabled until shadow parity is reviewed. Do not reuse Creative Studio's active admin_session.session and do not enable ALLOW_SHADOW_PROMOTION or ALLOW_LIVE_TELEGRAM.
+Complete the dedicated standalone Telegram authorization inside a secure server terminal/tmux session under runtime/. Then run read-only sender discovery against the staged Creative Studio source, review sender unanimity, configure the observed sender through the guarded internal endpoint while the source stays disabled, run the bounded one-shot SHADOW observation, and compare Trx/amount/time/source parity with Creative Studio. Do not reuse Creative Studio's active admin_session.session and do not enable ALLOW_SHADOW_PROMOTION or ALLOW_LIVE_TELEGRAM.
