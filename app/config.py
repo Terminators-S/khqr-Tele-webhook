@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     dashboard_enabled: bool = True
     dashboard_session_ttl_seconds: int = 43200
     dashboard_cookie_secure: bool = False
+    khqr_asset_root: str = "runtime/store-assets"
+    khqr_upload_max_bytes: int = 5242880
     log_level: str = "INFO"
 
     @property

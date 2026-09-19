@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
-  <title>KHQR Control Center</title>
+  <title>KHQR Store Setup</title>
   <link rel="stylesheet" href="/dashboard/assets/styles.css" />
 </head>
 <body>
@@ -14,42 +14,35 @@
   <section id="loginView" class="login-shell">
     <div class="login-card glass">
       <div class="brand-mark">K</div>
-      <p class="eyebrow">KHQR SELF-DEVELOP</p>
-      <h1>Payment control center</h1>
-      <p class="muted">
-        Configure businesses, Telegram evidence, payment sources and release
-        gates without exposing payment authority to the browser.
-      </p>
+      <p class="eyebrow">KHQR STORE</p>
+      <h1>Set up payments without the technical mess.</h1>
+      <p class="muted">Connect your store, KHQR and Telegram payment notifications in one guided setup.</p>
       <form id="loginForm" class="stack">
-        <label>Dashboard secret
-          <input id="loginSecret" type="password" autocomplete="current-password"
-                 placeholder="INTERNAL_SECRET" required minlength="8" />
+        <label>Dashboard password
+          <input id="loginSecret" type="password" autocomplete="current-password" required minlength="8" />
         </label>
-        <button class="btn primary" type="submit">Unlock dashboard</button>
+        <button class="btn primary" type="submit">Open dashboard</button>
         <p id="loginError" class="form-error hidden"></p>
       </form>
     </div>
   </section>
+
   <div id="appView" class="app-shell hidden">
     <aside class="sidebar glass">
       <div class="brand">
         <div class="brand-mark small">K</div>
-        <div>
-          <strong>KHQR</strong>
-          <span>Control Center</span>
-        </div>
+        <div><strong>KHQR</strong><span>Store Payments</span></div>
       </div>
       <nav id="nav">
-        <button data-page="overview" class="nav-item active">Overview</button>
+        <button data-page="home" class="nav-item active">Home</button>
         <button data-page="setup" class="nav-item">Setup</button>
-        <button data-page="businesses" class="nav-item">Businesses</button>
-        <button data-page="payments" class="nav-item">Payments</button>
-        <button data-page="test" class="nav-item">Real Test</button>
-        <button data-page="system" class="nav-item">System</button>
+        <button data-page="test" class="nav-item">Test payment</button>
+        <button data-page="activity" class="nav-item">Activity</button>
+        <button data-page="advanced" class="nav-item">Advanced</button>
       </nav>
       <div class="sidebar-foot">
         <span id="safetyDot" class="status-dot"></span>
-        <span id="safetyLabel">Loading safety state</span>
+        <span id="safetyLabel">Safe mode</span>
         <button id="logoutButton" class="link-btn">Sign out</button>
       </div>
     </aside>
@@ -57,238 +50,254 @@
     <main class="main">
       <header class="topbar">
         <div>
-          <p class="eyebrow">OPEN-SOURCE OPERATOR CONSOLE</p>
-          <h2 id="pageTitle">Overview</h2>
+          <p class="eyebrow">KHQR STORE PAYMENTS</p>
+          <h2 id="pageTitle">Home</h2>
         </div>
         <div class="top-actions">
-          <span id="apiHealth" class="pill">API · checking</span>
+          <label id="globalStoreLabel" class="top-store hidden">
+            <span>Store</span>
+            <select id="globalStoreSelect"></select>
+          </label>
+          <span id="apiHealth" class="pill">Checking</span>
           <button id="refreshButton" class="btn secondary">Refresh</button>
         </div>
       </header>
 
       <div id="globalError" class="alert danger hidden"></div>
       <div id="globalNotice" class="alert success hidden"></div>
-      <section id="page-overview" class="page active">
-        <div id="metricGrid" class="metric-grid"></div>
+
+      <section id="page-home" class="page active">
+        <div class="hero-panel glass simple-hero">
+          <div>
+            <p class="eyebrow">YOUR PAYMENT SETUP</p>
+            <h3 id="homeHeadline">Checking your store…</h3>
+            <p id="homeSummary" class="muted">Loading setup progress.</p>
+          </div>
+          <button id="homeNextButton" class="btn primary" type="button">Continue setup</button>
+        </div>
 
         <div class="content-grid two">
           <article class="panel glass">
-            <div class="panel-head">
-              <div>
-                <p class="eyebrow">SETUP STATUS</p>
-                <h3>Launch readiness</h3>
-              </div>
-              <span id="setupStage" class="pill"></span>
-            </div>
-            <div id="setupChecklist" class="checklist"></div>
+            <p class="eyebrow">SETUP PROGRESS</p>
+            <h3>Four things to finish</h3>
+            <div id="homeProgress" class="checklist"></div>
           </article>
-
           <article class="panel glass">
-            <div class="panel-head">
-              <div>
-                <p class="eyebrow">PAYMENT SAFETY</p>
-                <h3>Authority fuses</h3>
-              </div>
-            </div>
-            <div id="safetyCards" class="safety-list"></div>
+            <p class="eyebrow">PAYMENT STATUS</p>
+            <h3>Safe by default</h3>
+            <div id="homeStatus" class="checklist"></div>
           </article>
         </div>
 
         <article class="panel glass">
           <div class="panel-head">
             <div>
-              <p class="eyebrow">LATEST EVIDENCE</p>
-              <h3>Recent payment observations</h3>
+              <p class="eyebrow">RECENT ACTIVITY</p>
+              <h3>Latest bank notifications</h3>
             </div>
+            <button class="link-btn" data-goto="activity">View all</button>
           </div>
-          <div id="overviewEvidence" class="table-wrap"></div>
+          <div id="homeRecent" class="table-wrap"></div>
         </article>
       </section>
+
       <section id="page-setup" class="page">
-        <div class="hero-panel glass">
+        <div class="hero-panel glass simple-hero">
           <div>
-            <p class="eyebrow">FIRST-RUN WIZARD</p>
-            <h3>Go from clone to payment-ready safely.</h3>
-            <p class="muted">
-              Every source begins disabled. Finish configuration, verify
-              evidence, then activate intentionally.
-            </p>
+            <p class="eyebrow">GUIDED SETUP</p>
+            <h3>Get payment verification working step by step.</h3>
+            <p class="muted">Create a store, upload its real static KHQR image, then connect the Telegram group that receives payment notifications.</p>
           </div>
-          <span id="wizardStage" class="pill accent"></span>
+          <span id="setupProgressBadge" class="pill accent">0 / 4</span>
         </div>
 
-        <div class="content-grid two">
-          <article class="panel glass">
-            <div class="step-number">1</div>
-            <h3>Create business</h3>
-            <form id="businessForm" class="stack compact">
-              <label>Business name
-                <input name="name" placeholder="My Store" required />
-              </label>
-              <label>Slug
-                <input name="slug" placeholder="my-store" required />
-              </label>
-              <label>Webhook URL
-                <input name="webhook_url" placeholder="https://example.com/khqr/webhook" />
-              </label>
-              <button class="btn primary" type="submit">Create business</button>
-            </form>
-          </article>
+        <div id="setupStepper" class="setup-stepper"></div>
 
-          <article class="panel glass">
-            <div class="step-number">2</div>
-            <h3>Add payment source</h3>
-            <form id="sourceForm" class="stack compact">
-              <label>Business
-                <select name="business_id" id="sourceBusiness" required></select>
-              </label>
-              <label>Source name
-                <input name="name" placeholder="ABA Main" required />
-              </label>
-              <div class="field-row">
-                <label>Currency
-                  <input name="currency" value="USD" required />
-                </label>
-                <label>Telegram group ID
-                  <input name="telegram_group_id" id="telegramGroupInput"
-                         list="telegramChatOptions" inputmode="numeric"
-                         placeholder="-100..." />
-                  <datalist id="telegramChatOptions"></datalist>
-                </label>
-              </div>
-              <label>Merchant alias
-                <input name="merchant_alias" placeholder="MY STORE" />
-              </label>
-              <label>Static KHQR payload
-                <textarea name="static_khqr" rows="4"
-                          placeholder="000201010211..."></textarea>
-              </label>
-              <button class="btn primary" type="submit">Create disabled source</button>
-            </form>
-          </article>
-        </div>
-
-        <div class="content-grid two">
-          <article class="panel glass">
-            <div class="step-number">3</div>
-            <h3>Telegram evidence</h3>
-            <p class="muted">
-              Connect the dedicated Telegram session, then discover and bind
-              the trusted ABA notification sender.
-            </p>
-            <div id="telegramSetupState" class="checklist"></div>
-
-            <div id="telegramAuthPanel" class="stack compact">
-              <form id="telegramPhoneForm" class="stack compact">
-                <label>Telegram phone number
-                  <input name="phone" type="tel" placeholder="+855..." autocomplete="tel" />
-                </label>
-                <button class="btn secondary" type="submit">Send login code</button>
-              </form>
-
-              <form id="telegramCodeForm" class="stack compact hidden">
-                <label>Confirmation code
-                  <input name="code" inputmode="numeric" autocomplete="one-time-code" />
-                </label>
-                <button class="btn primary" type="submit">Confirm code</button>
-              </form>
-
-              <form id="telegramPasswordForm" class="stack compact hidden">
-                <label>Telegram 2-step password
-                  <input name="password" type="password" autocomplete="current-password" />
-                </label>
-                <button class="btn primary" type="submit">Confirm password</button>
-              </form>
-
-              <div class="field-row">
-                <button id="loadTelegramChats" class="btn secondary" type="button">
-                  Load groups
-                </button>
-                <button id="cancelTelegramAuth" class="btn secondary" type="button">
-                  Reset login
-                </button>
-              </div>
-              <p id="telegramAuthMessage" class="muted"></p>
+        <article class="panel glass setup-card" id="setupStoreCard">
+          <div class="setup-card-head">
+            <span class="step-number">1</span>
+            <div>
+              <h3>Store</h3>
+              <p class="muted">Create a store or switch between stores you already configured.</p>
             </div>
-          </article>
+            <span id="storeStepBadge" class="pill">Not set</span>
+          </div>
 
-          <article class="panel glass">
-            <div class="step-number">4</div>
-            <h3>Verify before live</h3>
-            <p class="muted">
-              Run SHADOW observation first. Migration installs should collect
-              parity evidence before cutover; new installs can activate only
-              after source configuration is complete.
-            </p>
-            <div id="verificationState" class="checklist"></div>
-          </article>
-        </div>
-      </section>
-      <section id="page-businesses" class="page">
-        <div class="page-actions">
-          <p class="muted">Manage consuming projects and payment evidence sources.</p>
-        </div>
-        <div id="businessList" class="card-list"></div>
-        <h3 class="section-title">Payment sources</h3>
-        <div id="sourceList" class="card-list"></div>
-      </section>
+          <div class="store-toolbar">
+            <label>Current store
+              <select id="setupStoreSelect"></select>
+            </label>
+            <button id="newStoreButton" class="btn secondary" type="button">+ New store</button>
+          </div>
 
-      <section id="page-payments" class="page">
-        <div class="content-grid two">
-          <article class="panel glass">
-            <div class="panel-head"><h3>Payment intents</h3></div>
-            <div id="intentTable" class="table-wrap"></div>
-          </article>
-          <article class="panel glass">
-            <div class="panel-head"><h3>Payment evidence</h3></div>
-            <div id="evidenceTable" class="table-wrap"></div>
-          </article>
-        </div>
+          <form id="storeForm" class="stack compact">
+            <label>Store name
+              <input name="name" placeholder="My Store" required />
+            </label>
+            <div class="field-row">
+              <label>Currency
+                <select name="currency">
+                  <option value="USD">USD</option>
+                  <option value="KHR">KHR</option>
+                </select>
+              </label>
+              <label>Webhook URL <span class="optional">optional</span>
+                <input name="webhook_url" placeholder="https://yourstore.com/payment-webhook" />
+              </label>
+            </div>
+            <div class="form-actions">
+              <button id="saveStoreButton" class="btn primary" type="submit">Create store</button>
+              <button id="cancelStoreEdit" class="btn secondary hidden" type="button">Cancel</button>
+            </div>
+          </form>
+          <div id="storeReady" class="ready-summary hidden"></div>
+        </article>
+
+        <article class="panel glass setup-card" id="setupPaymentCard">
+          <div class="setup-card-head">
+            <span class="step-number">2</span>
+            <div>
+              <h3>Upload your KHQR</h3>
+              <p class="muted">Use the exact static KHQR image from your bank/Bakong. We keep and display the original uploaded image.</p>
+            </div>
+            <span id="paymentStepBadge" class="pill">Not set</span>
+          </div>
+
+          <form id="khqrUploadForm" class="stack compact" enctype="multipart/form-data">
+            <label class="upload-drop" for="khqrImageInput">
+              <input id="khqrImageInput" name="file" type="file" accept="image/png,image/jpeg,image/webp" required />
+              <strong>Choose KHQR image</strong>
+              <span>PNG, JPG or WebP · max 5 MB</span>
+            </label>
+            <p id="khqrSelectedFile" class="field-help">Upload the static QR image customers normally scan.</p>
+            <button id="uploadKhqrButton" class="btn primary" type="submit">Upload & verify KHQR</button>
+          </form>
+
+          <div id="paymentPreview" class="payment-preview hidden">
+            <div class="qr-stage compact-qr">
+              <img id="paymentPreviewQr" alt="Your uploaded KHQR" />
+            </div>
+            <div>
+              <span id="paymentPreviewBadge" class="pill good">KHQR verified</span>
+              <h3 id="paymentPreviewName">Merchant</h3>
+              <p id="paymentPreviewAccount" class="muted"></p>
+              <p class="muted">This is the exact image saved for this store. Replace it any time while the store is disabled.</p>
+              <button id="replaceKhqrButton" class="btn secondary small" type="button">Replace KHQR image</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel glass setup-card" id="setupTelegramCard">
+          <div class="setup-card-head">
+            <span class="step-number">3</span>
+            <div>
+              <h3>Telegram payment notifications</h3>
+              <p class="muted">Connect the Telegram account that can see your ABA payment-notification group.</p>
+            </div>
+            <span id="telegramStepBadge" class="pill">Not set</span>
+          </div>
+
+          <div id="telegramSetupState" class="checklist"></div>
+
+          <form id="telegramCredentialsForm" class="stack compact">
+            <div class="field-row">
+              <label>Telegram API ID
+                <input name="api_id" inputmode="numeric" placeholder="12345678" required />
+              </label>
+              <label>Telegram API hash
+                <input name="api_hash" type="password" placeholder="API hash" required />
+              </label>
+            </div>
+            <p class="field-help">Get these once from my.telegram.org → API development tools.</p>
+            <button class="btn primary" type="submit">Save Telegram API</button>
+          </form>
+
+          <div id="telegramAuthPanel" class="stack compact">
+            <form id="telegramPhoneForm" class="stack compact">
+              <label>Telegram phone number
+                <input name="phone" type="tel" placeholder="+855..." autocomplete="tel" />
+              </label>
+              <button class="btn primary" type="submit">Send login code</button>
+            </form>
+
+            <form id="telegramCodeForm" class="stack compact hidden">
+              <label>Confirmation code
+                <input name="code" inputmode="numeric" autocomplete="one-time-code" />
+              </label>
+              <button class="btn primary" type="submit">Confirm code</button>
+            </form>
+
+            <form id="telegramPasswordForm" class="stack compact hidden">
+              <label>Telegram 2-step password
+                <input name="password" type="password" autocomplete="current-password" />
+              </label>
+              <button class="btn primary" type="submit">Confirm password</button>
+            </form>
+          </div>
+
+          <div id="telegramGroupPanel" class="stack compact hidden">
+            <label>Payment notification group
+              <select id="telegramGroupSelect">
+                <option value="">Load your Telegram groups first</option>
+              </select>
+            </label>
+            <div class="field-row">
+              <button id="loadTelegramChats" class="btn secondary" type="button">Load my groups</button>
+              <button id="useTelegramGroup" class="btn primary" type="button">Use this group</button>
+            </div>
+            <p class="field-help">We will automatically find the trusted ABA notification sender inside the selected group.</p>
+          </div>
+
+          <button id="cancelTelegramAuth" class="link-btn" type="button">Reset Telegram login</button>
+          <p id="telegramAuthMessage" class="muted"></p>
+        </article>
+
+        <article class="panel glass setup-card" id="setupReadyCard">
+          <div class="setup-card-head">
+            <span class="step-number">4</span>
+            <div>
+              <h3>Test a real payment</h3>
+              <p class="muted">Once the first three steps are green, send a small real payment to prove the full flow.</p>
+            </div>
+            <span id="readyStepBadge" class="pill">Waiting</span>
+          </div>
+          <div id="setupReadyState" class="checklist"></div>
+          <button id="goToTestButton" class="btn primary" type="button">Open test payment</button>
+        </article>
       </section>
 
       <section id="page-test" class="page">
-        <div class="hero-panel glass">
+        <div class="hero-panel glass simple-hero">
           <div>
-            <p class="eyebrow">REAL PAYMENT ACCEPTANCE</p>
-            <h3>Prove the complete payment path with a small real transfer.</h3>
-            <p class="muted">
-              The money reaches your configured merchant account, but this test
-              remains SHADOW-only: no allocation, webhook, credit, or product
-              fulfillment is allowed.
-            </p>
+            <p class="eyebrow">TEST PAYMENT</p>
+            <h3>Send a small real payment and watch the system verify it.</h3>
+            <p class="muted">The money reaches your merchant account. This test does not deliver products or notify your store webhook.</p>
           </div>
-          <span id="acceptanceMode" class="pill warn">SHADOW TEST</span>
+          <span class="pill good">Safe test mode</span>
         </div>
 
         <div id="acceptanceSetup" class="content-grid two">
           <article class="panel glass">
-            <p class="eyebrow">1 · READINESS</p>
-            <h3>Required configuration</h3>
-            <label>Payment source
+            <p class="eyebrow">READY?</p>
+            <h3>Before you pay</h3>
+            <label id="acceptanceSourceLabel">Payment account
               <select id="acceptanceSource"></select>
             </label>
             <div id="acceptanceChecklist" class="checklist"></div>
           </article>
 
           <article class="panel glass">
-            <p class="eyebrow">2 · TEST AMOUNT</p>
-            <h3>Create a real payment test</h3>
+            <p class="eyebrow">START TEST</p>
+            <h3>Choose a small amount</h3>
             <form id="acceptanceStartForm" class="stack compact">
-              <label>Base amount (USD)
-                <input id="acceptanceAmount" type="number" min="0.01" max="5"
-                       step="0.01" value="1.00" required />
+              <label>Test amount (USD)
+                <input id="acceptanceAmount" type="number" min="0.01" max="5" step="0.01" value="0.10" required />
               </label>
-              <label>Safety confirmation
-                <input id="acceptanceConfirm" autocomplete="off"
-                       placeholder='Type "SEND REAL TEST MONEY"' required />
+              <label>Confirm real money
+                <input id="acceptanceConfirm" autocomplete="off" placeholder='Type "SEND REAL TEST MONEY"' required />
               </label>
-              <p class="muted">
-                This sends real money to the merchant. The system does not
-                automatically refund test transfers.
-              </p>
-              <button id="acceptanceStartButton" class="btn primary" type="submit">
-                Start real payment test
-              </button>
+              <p class="muted">Use a small amount. Test payments are real and are not automatically refunded.</p>
+              <button id="acceptanceStartButton" class="btn primary" type="submit">Create test payment</button>
             </form>
           </article>
         </div>
@@ -303,74 +312,70 @@
                 </div>
                 <span id="acceptanceTimer" class="pill accent">08:00</span>
               </div>
-              <div class="qr-stage">
-                <img id="acceptanceQr" alt="Merchant KHQR code" />
-              </div>
+              <div class="qr-stage"><img id="acceptanceQr" alt="Merchant KHQR code" /></div>
               <div class="payment-instruction">
                 <span>Send exactly</span>
                 <strong id="acceptancePayable">$0.00</strong>
               </div>
               <div class="payment-copy-row">
-                <div>
-                  <span>Remark / note</span>
-                  <code id="acceptanceRemark">—</code>
-                </div>
-                <button id="copyAcceptanceRemark" class="btn secondary small" type="button">
-                  Copy remark
-                </button>
+                <div><span>Payment note / Remark</span><code id="acceptanceRemark">—</code></div>
+                <button id="copyAcceptanceRemark" class="btn secondary small" type="button">Copy note</button>
               </div>
-              <p class="muted">
-                Scan the merchant QR, manually enter the exact amount above,
-                and enter the exact Remark in your banking app.
-              </p>
+              <p class="muted">Scan the QR, enter the exact amount above, and copy the exact payment note into your banking app.</p>
             </article>
 
             <article class="panel glass">
               <div class="panel-head">
-                <div>
-                  <p class="eyebrow">LIVE VERIFICATION</p>
-                  <h3>Acceptance timeline</h3>
-                </div>
-                <span id="acceptanceResultBadge" class="pill warn">WAITING</span>
+                <div><p class="eyebrow">LIVE RESULT</p><h3>Payment check</h3></div>
+                <span id="acceptanceResultBadge" class="pill warn">Waiting</span>
               </div>
               <div id="acceptanceTimeline" class="checklist"></div>
               <div id="acceptanceResult" class="acceptance-result hidden"></div>
               <div class="field-row acceptance-actions">
-                <button id="acceptanceCheckNow" class="btn primary" type="button">
-                  Check payment now
-                </button>
-                <button id="acceptanceCancel" class="btn secondary" type="button">
-                  Cancel test
-                </button>
+                <button id="acceptanceCheckNow" class="btn primary" type="button">Check now</button>
+                <button id="acceptanceCancel" class="btn secondary" type="button">Cancel</button>
               </div>
             </article>
           </div>
         </section>
       </section>
 
-      <section id="page-system" class="page">
+      <section id="page-activity" class="page">
+        <div class="hero-panel glass simple-hero">
+          <div><p class="eyebrow">ACTIVITY</p><h3>Payments and test history</h3><p class="muted">A simple view of what the system has seen.</p></div>
+        </div>
+        <div class="content-grid two">
+          <article class="panel glass"><h3>Payment tests</h3><div id="intentTable" class="table-wrap"></div></article>
+          <article class="panel glass"><h3>Bank notifications</h3><div id="evidenceTable" class="table-wrap"></div></article>
+        </div>
+      </section>
+
+      <section id="page-advanced" class="page">
+        <div class="hero-panel glass simple-hero">
+          <div>
+            <p class="eyebrow">ADVANCED</p>
+            <h3>Technical controls</h3>
+            <p class="muted">You usually do not need anything here. These details are for deployment, debugging and integrations.</p>
+          </div>
+        </div>
+
+        <details class="advanced-details panel glass">
+          <summary>Businesses & payment sources</summary>
+          <div id="businessList" class="card-list"></div>
+          <h3 class="section-title">Payment sources</h3>
+          <div id="sourceList" class="card-list"></div>
+        </details>
+
         <div class="content-grid two">
           <article class="panel glass">
-            <p class="eyebrow">RUNTIME</p>
-            <h3>Workers & queues</h3>
+            <p class="eyebrow">RUNTIME</p><h3>Workers & queues</h3>
             <div id="runtimeDetails" class="definition-list"></div>
           </article>
           <article class="panel glass">
-            <p class="eyebrow">SECURITY</p>
-            <h3>Deployment hardening</h3>
+            <p class="eyebrow">SECURITY</p><h3>Safety controls</h3>
             <div id="securityDetails" class="checklist"></div>
           </article>
         </div>
-        <article class="panel glass">
-          <p class="eyebrow">INTEGRATION</p>
-          <h3>Client contract</h3>
-          <div class="integration-grid">
-            <div><span>API endpoint</span><code>POST /v1/payment-intents</code></div>
-            <div><span>Auth header</span><code>X-Api-Key</code></div>
-            <div><span>Replay guard</span><code>Idempotency-Key</code></div>
-            <div><span>Webhook event</span><code>payment.intent.paid</code></div>
-          </div>
-        </article>
       </section>
     </main>
   </div>
@@ -378,15 +383,12 @@
   <dialog id="secretDialog" class="secret-dialog glass">
     <form method="dialog">
       <div class="panel-head">
-        <div>
-          <p class="eyebrow">SHOW ONCE</p>
-          <h3>Client credentials</h3>
-        </div>
+        <div><p class="eyebrow">SAVE THESE</p><h3>Store integration keys</h3></div>
         <button class="icon-btn" value="close">×</button>
       </div>
-      <p class="muted">Save these now. The API key is not recoverable later.</p>
+      <p class="muted">These are only needed when you connect KHQR to your website/app. Save them somewhere safe.</p>
       <div id="secretContent" class="secret-content"></div>
-      <button class="btn primary" value="close">I saved them</button>
+      <button class="btn primary" value="close">Saved</button>
     </form>
   </dialog>
 

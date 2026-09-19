@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
+import secrets
 import stat
 from pathlib import Path
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -19,6 +22,15 @@ from .dashboard_auth import (
     verify_dashboard_secret,
 )
 from .db import get_db
+from .khqr_asset import (
+    KhqrAssetError,
+    image_exists,
+    image_metadata,
+    image_path,
+    save_uploaded_khqr,
+)
+from .khqr_payload import KhqrPayloadError, validate_static_khqr
+from .security import generate_webhook_secret
 from .telegram_credentials import telegram_credentials_status
 from .telegram_session import session_location
 
@@ -43,6 +55,22 @@ class DashboardSourceCreate(BaseModel):
     telegram_sender_id: int | None = None
     merchant_alias: str | None = Field(default=None, max_length=160)
     static_khqr: str | None = None
+
+
+class DashboardStoreCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    currency: Literal["USD", "KHR"] = "USD"
+    webhook_url: str | None = None
+
+
+class DashboardStoreUpdate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    currency: Literal["USD", "KHR"] = "USD"
+    webhook_url: str | None = None
+
+
+class DashboardGroupUpdate(BaseModel):
+    telegram_group_id: int
 
 
 class DashboardSenderUpdate(BaseModel):
@@ -77,6 +105,19 @@ def _mask_trx(value: str | None) -> str:
 
 
 def _source_payload(source: models.PaymentSource) -> dict:
+    khqr_valid = False
+    khqr_error = None
+    khqr_details = None
+    uploaded_image = image_exists(source.id)
+    upload_meta = image_metadata(source.id) if uploaded_image else {}
+    if (source.static_khqr or "").strip():
+        try:
+            khqr_details = validate_static_khqr(source.static_khqr or "")
+            khqr_valid = True
+        except KhqrPayloadError as exc:
+            khqr_error = str(exc)
+
+    configured = bool(core.source_configured(source) and khqr_valid and uploaded_image)
     return {
         "id": source.id,
         "business_id": source.business_id,
@@ -86,10 +127,54 @@ def _source_payload(source: models.PaymentSource) -> dict:
         "telegram_sender_id": source.telegram_sender_id,
         "merchant_alias": source.merchant_alias,
         "static_khqr_configured": bool(source.static_khqr),
+        "khqr_image_configured": uploaded_image,
+        "khqr_image_url": (
+            f"/dashboard/api/sources/{source.id}/khqr-image"
+            if uploaded_image else None
+        ),
+        "khqr_image_filename": upload_meta.get("filename"),
+        "khqr_valid": khqr_valid and uploaded_image,
+        "khqr_error": (
+            khqr_error
+            if khqr_error
+            else None if uploaded_image else "upload your store's static KHQR image"
+        ),
+        "khqr_account_id": khqr_details.bakong_id if khqr_details else None,
+        "khqr_account_type": khqr_details.account_type if khqr_details else None,
+        "khqr_merchant_name": khqr_details.merchant_name if khqr_details else None,
         "enabled": bool(source.enabled),
-        "ready": core.source_ready(source),
-        "configured": core.source_configured(source),
+        "ready": bool(source.enabled and configured),
+        "configured": configured,
         "created_at": source.created_at,
+    }
+
+
+def _store_slug(name: str) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    base = base[:90] or "store"
+    return base
+
+
+def _primary_source(db: Session, business_id: str) -> models.PaymentSource | None:
+    return db.scalar(
+        select(models.PaymentSource)
+        .where(models.PaymentSource.business_id == business_id)
+        .order_by(models.PaymentSource.created_at)
+        .limit(1)
+    )
+
+
+def _store_payload(db: Session, business: models.Business) -> dict:
+    source = _primary_source(db, business.id)
+    return {
+        "id": business.id,
+        "name": business.name,
+        "slug": business.slug,
+        "webhook_url": business.webhook_url,
+        "webhook_configured": bool(business.webhook_url),
+        "is_active": business.is_active,
+        "created_at": business.created_at,
+        "source": _source_payload(source) if source else None,
     }
 
 
@@ -119,8 +204,9 @@ def _setup_state(db: Session) -> dict:
     settings = get_settings()
     businesses = db.scalar(select(func.count(models.Business.id))) or 0
     sources = list(db.scalars(select(models.PaymentSource).order_by(models.PaymentSource.created_at)))
-    configured_sources = sum(1 for source in sources if core.source_configured(source))
-    ready_sources = sum(1 for source in sources if core.source_ready(source))
+    source_states = [_source_payload(source) for source in sources]
+    configured_sources = sum(1 for item in source_states if item["configured"])
+    ready_sources = sum(1 for item in source_states if item["ready"])
     session_path, _name, _workdir = session_location(settings.telegram_session_name)
     session_exists = session_path.exists()
     session_mode = (
@@ -243,7 +329,7 @@ def dashboard_overview(
             "businesses": businesses,
             "sources": len(sources),
             "enabled_sources": sum(1 for source in sources if source.enabled),
-            "ready_sources": sum(1 for source in sources if core.source_ready(source)),
+            "ready_sources": sum(1 for source in sources if _source_payload(source)["ready"]),
             "allocations": allocations,
         },
         "safety": {
@@ -269,6 +355,106 @@ def dashboard_overview(
             for row in recent_evidence
         ],
     }
+
+
+@router.get("/api/stores")
+def dashboard_stores(
+    _session=Depends(require_dashboard_session),
+    db: Session = Depends(get_db),
+):
+    rows = list(db.scalars(select(models.Business).order_by(models.Business.created_at)))
+    return [_store_payload(db, row) for row in rows]
+
+
+@router.post("/api/stores")
+def dashboard_create_store(
+    payload: DashboardStoreCreate,
+    _session=Depends(require_dashboard_csrf),
+    db: Session = Depends(get_db),
+):
+    base = _store_slug(payload.name)
+    business = None
+    api_key = None
+    webhook_secret = None
+    for attempt in range(12):
+        slug = base if attempt == 0 else f"{base}-{secrets.token_hex(2)}"
+        try:
+            business, api_key, webhook_secret = core.create_business(
+                db,
+                payload.name,
+                slug,
+                payload.webhook_url,
+            )
+            break
+        except core.Conflict:
+            continue
+    if business is None:
+        raise HTTPException(status_code=409, detail="could not create a unique store")
+
+    try:
+        core.create_source(
+            db,
+            business.id,
+            name=payload.name.strip() + " Payments",
+            currency=payload.currency,
+            telegram_group_id=None,
+            telegram_sender_id=None,
+            merchant_alias=payload.name.strip(),
+            static_khqr=None,
+            enabled=False,
+        )
+    except Exception:
+        db.delete(business)
+        db.commit()
+        raise
+
+    result = _store_payload(db, business)
+    result.update({
+        "api_key": api_key,
+        "webhook_secret": webhook_secret,
+        "one_time_secret": True,
+    })
+    return result
+
+
+@router.post("/api/stores/{store_id}")
+def dashboard_update_store(
+    store_id: str,
+    payload: DashboardStoreUpdate,
+    _session=Depends(require_dashboard_csrf),
+    db: Session = Depends(get_db),
+):
+    business = db.get(models.Business, store_id)
+    if not business:
+        raise HTTPException(status_code=404, detail="store not found")
+    source = _primary_source(db, business.id)
+    if source and source.enabled:
+        raise HTTPException(status_code=409, detail="disable the store before editing setup")
+    if source and source.static_khqr and source.currency != payload.currency:
+        raise HTTPException(
+            status_code=409,
+            detail="replace the uploaded KHQR image to change currency",
+        )
+
+    business.name = payload.name.strip()
+    new_webhook_secret = None
+    if business.webhook_url != payload.webhook_url:
+        business.webhook_url = payload.webhook_url
+        business.webhook_secret = (
+            generate_webhook_secret() if payload.webhook_url else None
+        )
+        new_webhook_secret = business.webhook_secret
+    if source:
+        source.name = payload.name.strip() + " Payments"
+        if not source.static_khqr:
+            source.currency = payload.currency
+            source.merchant_alias = payload.name.strip()
+    db.commit()
+    db.refresh(business)
+    result = _store_payload(db, business)
+    if new_webhook_secret:
+        result["webhook_secret"] = new_webhook_secret
+    return result
 
 
 @router.get("/api/businesses")
@@ -359,6 +545,114 @@ def dashboard_create_source(
     return _source_payload(source)
 
 
+@router.get("/api/sources/{source_id}/khqr-image")
+def dashboard_source_khqr_image(
+    source_id: str,
+    _session=Depends(require_dashboard_session),
+    db: Session = Depends(get_db),
+):
+    source = db.get(models.PaymentSource, source_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="payment source not found")
+    if not image_exists(source.id):
+        raise HTTPException(status_code=404, detail="KHQR image has not been uploaded")
+    meta = image_metadata(source.id)
+    return FileResponse(
+        image_path(source.id),
+        media_type=meta.get("media_type") or "application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/api/sources/{source_id}/qr.png")
+def dashboard_source_qr_legacy_alias(
+    source_id: str,
+    _session=Depends(require_dashboard_session),
+    db: Session = Depends(get_db),
+):
+    source = db.get(models.PaymentSource, source_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="payment source not found")
+    if not image_exists(source.id):
+        raise HTTPException(status_code=404, detail="KHQR image has not been uploaded")
+    meta = image_metadata(source.id)
+    return FileResponse(
+        image_path(source.id),
+        media_type=meta.get("media_type") or "application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/api/sources/{source_id}/khqr-image")
+async def dashboard_upload_khqr_image(
+    source_id: str,
+    file: UploadFile = File(...),
+    _session=Depends(require_dashboard_csrf),
+    db: Session = Depends(get_db),
+):
+    source = db.get(models.PaymentSource, source_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="payment source not found")
+    if source.enabled:
+        raise HTTPException(status_code=409, detail="disable the store before replacing KHQR")
+
+    limit = get_settings().khqr_upload_max_bytes
+    data = await file.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(status_code=413, detail="KHQR image is too large")
+
+    try:
+        asset = save_uploaded_khqr(
+            source.id,
+            data,
+            filename=file.filename,
+            media_type=file.content_type,
+        )
+    except KhqrAssetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    business = db.get(models.Business, source.business_id)
+    source.static_khqr = asset.payload
+    source.currency = asset.validation.currency or source.currency
+    source.merchant_alias = (
+        (asset.validation.merchant_name or "").strip()
+        or (business.name if business else source.merchant_alias)
+        or source.name
+    )
+    db.commit()
+    db.refresh(source)
+
+    result = _source_payload(source)
+    result.update({
+        "upload_valid": True,
+        "uploaded_filename": asset.filename,
+        "uploaded_sha256": asset.sha256,
+        "image_width": asset.width,
+        "image_height": asset.height,
+    })
+    return result
+
+
+@router.post("/api/sources/{source_id}/telegram-group")
+def dashboard_update_telegram_group(
+    source_id: str,
+    payload: DashboardGroupUpdate,
+    _session=Depends(require_dashboard_csrf),
+    db: Session = Depends(get_db),
+):
+    try:
+        source = core.configure_source_group(
+            db,
+            source_id,
+            payload.telegram_group_id,
+        )
+    except core.NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except core.Conflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _source_payload(source)
+
+
 @router.post("/api/sources/{source_id}/sender")
 def dashboard_configure_sender(
     source_id: str,
@@ -387,11 +681,20 @@ def dashboard_set_enabled(
             status_code=400,
             detail='type "ENABLE SOURCE" to activate a payment source',
         )
-    if payload.enabled and not _source_has_verified_acceptance(db, source_id):
-        raise HTTPException(
-            status_code=409,
-            detail="pass a Real Payment Test before dashboard activation",
-        )
+    if payload.enabled:
+        source = db.get(models.PaymentSource, source_id)
+        if not source:
+            raise HTTPException(status_code=404, detail="payment source not found")
+        if not _source_payload(source)["configured"]:
+            raise HTTPException(
+                status_code=409,
+                detail="finish store setup, including an uploaded verified KHQR image, before activation",
+            )
+        if not _source_has_verified_acceptance(db, source_id):
+            raise HTTPException(
+                status_code=409,
+                detail="pass a Real Payment Test before dashboard activation",
+            )
     try:
         source = core.set_source_enabled(db, source_id, payload.enabled)
     except core.NotFound as exc:

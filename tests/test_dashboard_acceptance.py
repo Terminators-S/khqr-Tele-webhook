@@ -5,8 +5,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app import core, models
-from app.main import app
 import app.dashboard_acceptance as acceptance
+import app.khqr_asset as khqr_asset
+from app.main import app
+from tests.khqr_test_utils import khqr_png_bytes, valid_khqr_payload
 
 
 client = TestClient(app)
@@ -14,7 +16,10 @@ SECRET = "test-internal-secret-32-characters"
 
 
 def login():
-    response = client.post("/dashboard/api/login", json={"secret": SECRET})
+    response = client.post(
+        "/dashboard/api/login",
+        json={"secret": SECRET},
+    )
     assert response.status_code == 200
     return response.json()["csrf_token"]
 
@@ -23,6 +28,7 @@ class FakeTelegramClient:
     def __init__(self, messages):
         self.messages = messages
         self.is_connected = True
+
     async def disconnect(self):
         self.is_connected = False
 
@@ -52,12 +58,22 @@ def aba_message(message_id, sender_id, amount, remark, trx):
         caption=None,
         date=datetime.now(timezone.utc),
     )
-def create_disabled_source(db):
+def create_disabled_source(db, monkeypatch, tmp_path):
+    settings = khqr_asset.get_settings()
+    monkeypatch.setattr(
+        settings,
+        "khqr_asset_root",
+        str(tmp_path / "store-assets"),
+    )
     business, _api_key, _secret = core.create_business(
         db,
         "Acceptance Store",
         "acceptance-store",
         "https://example.invalid/webhook",
+    )
+    payload = valid_khqr_payload(
+        account_id="acceptance@aba",
+        merchant_name="TEST STORE",
     )
     source = core.create_source(
         db,
@@ -67,29 +83,107 @@ def create_disabled_source(db):
         telegram_group_id=-100777001,
         telegram_sender_id=777001,
         merchant_alias="TEST STORE",
-        static_khqr="000201010211TESTSTATIC6304ABCD",
+        static_khqr=payload,
         enabled=False,
     )
-    return business, source
+    original = khqr_png_bytes(
+        account_id="acceptance@aba",
+        merchant_name="TEST STORE",
+    )
+    asset = khqr_asset.save_uploaded_khqr(
+        source.id,
+        original,
+        filename="merchant.png",
+        media_type="image/png",
+    )
+    assert asset.payload == payload
+    return business, source, original
 
 
-def test_acceptance_start_requires_explicit_confirmation(db):
-    _business, source = create_disabled_source(db)
+def authorize_session(monkeypatch, tmp_path):
+    session_path = tmp_path / "authorized.session"
+    session_path.write_bytes(b"session")
+    monkeypatch.setattr(
+        acceptance,
+        "_session_parts",
+        lambda: (None, None, session_path, "x", tmp_path),
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "_local_session_account_id",
+        lambda path: 123,
+    )
+def test_acceptance_start_requires_explicit_confirmation(
+    db, monkeypatch, tmp_path
+):
+    authorize_session(monkeypatch, tmp_path)
+    _business, source, _image = create_disabled_source(
+        db,
+        monkeypatch,
+        tmp_path,
+    )
     csrf = login()
     response = client.post(
         "/dashboard/api/acceptance-tests/start",
         headers={"X-CSRF-Token": csrf},
-        json={"source_id": source.id, "amount_minor": 100, "confirm": ""},
+        json={
+            "source_id": source.id,
+            "amount_minor": 100,
+            "confirm": "",
+        },
     )
     assert response.status_code == 400
+
+
+def test_acceptance_requires_uploaded_image(db, monkeypatch, tmp_path):
+    authorize_session(monkeypatch, tmp_path)
+    settings = khqr_asset.get_settings()
+    monkeypatch.setattr(
+        settings,
+        "khqr_asset_root",
+        str(tmp_path / "missing-assets"),
+    )
+    business, _api, _secret = core.create_business(
+        db,
+        "No Image Store",
+        "no-image-store",
+        None,
+    )
+    source = core.create_source(
+        db,
+        business.id,
+        name="No Image",
+        currency="USD",
+        telegram_group_id=-100700001,
+        telegram_sender_id=700001,
+        merchant_alias="NO IMAGE",
+        static_khqr=valid_khqr_payload(
+            account_id="no-image@aba",
+            merchant_name="NO IMAGE",
+        ),
+        enabled=False,
+    )
+    csrf = login()
+    response = client.post(
+        "/dashboard/api/acceptance-tests/start",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "source_id": source.id,
+            "amount_minor": 100,
+            "confirm": "SEND REAL TEST MONEY",
+        },
+    )
+    assert response.status_code == 409
+    assert "upload your store's static KHQR image" in response.json()["detail"]
 def test_acceptance_real_evidence_stays_shadow_and_suppresses_side_effects(
     db, monkeypatch, tmp_path
 ):
-    session_path = tmp_path / "authorized.session"
-    session_path.write_bytes(b"session")
-    monkeypatch.setattr(acceptance, "_session_parts", lambda: (None, None, session_path, "x", tmp_path))
-    monkeypatch.setattr(acceptance, "_local_session_account_id", lambda path: 123)
-    _business, source = create_disabled_source(db)
+    authorize_session(monkeypatch, tmp_path)
+    _business, source, original_image = create_disabled_source(
+        db,
+        monkeypatch,
+        tmp_path,
+    )
     csrf = login()
 
     started = client.post(
@@ -107,6 +201,12 @@ def test_acceptance_real_evidence_stays_shadow_and_suppresses_side_effects(
     assert test["webhook_suppressed"] is True
     assert test["payable_amount_minor"] >= 100
     assert test["remark"].startswith("KQ")
+
+    qr = client.get(
+        f"/dashboard/api/acceptance-tests/{test['intent_id']}/qr.png"
+    )
+    assert qr.status_code == 200
+    assert qr.content == original_image
 
     amount = test["payable_amount_minor"] / 100
     message = aba_message(
@@ -140,7 +240,6 @@ def test_acceptance_real_evidence_stays_shadow_and_suppresses_side_effects(
     assert result["would_excess_minor"] == 0
     assert result["match_reason"] == "remark"
     assert result["source_enabled"] is False
-
     db.expire_all()
     source_row = db.get(models.PaymentSource, source.id)
     assert source_row.enabled is False
@@ -153,7 +252,9 @@ def test_acceptance_real_evidence_stays_shadow_and_suppresses_side_effects(
     assert evidence is not None
     assert evidence.state == "SHADOW"
 
-    allocations = db.scalar(select(func.count(models.PaymentAllocation.id))) or 0
+    allocations = (
+        db.scalar(select(func.count(models.PaymentAllocation.id))) or 0
+    )
     outbox = db.scalar(select(func.count(models.WebhookOutbox.id))) or 0
     events = db.scalar(select(func.count(models.PaymentEvent.id))) or 0
     assert allocations == 0
@@ -161,12 +262,15 @@ def test_acceptance_real_evidence_stays_shadow_and_suppresses_side_effects(
     assert events == 0
 
 
-def test_acceptance_cancel_releases_reservation(db, monkeypatch, tmp_path):
-    session_path = tmp_path / "authorized.session"
-    session_path.write_bytes(b"session")
-    monkeypatch.setattr(acceptance, "_session_parts", lambda: (None, None, session_path, "x", tmp_path))
-    monkeypatch.setattr(acceptance, "_local_session_account_id", lambda path: 123)
-    _business, source = create_disabled_source(db)
+def test_acceptance_cancel_releases_reservation(
+    db, monkeypatch, tmp_path
+):
+    authorize_session(monkeypatch, tmp_path)
+    _business, source, _image = create_disabled_source(
+        db,
+        monkeypatch,
+        tmp_path,
+    )
     csrf = login()
     started = client.post(
         "/dashboard/api/acceptance-tests/start",
@@ -177,6 +281,7 @@ def test_acceptance_cancel_releases_reservation(db, monkeypatch, tmp_path):
             "confirm": "SEND REAL TEST MONEY",
         },
     ).json()
+
     before = db.scalar(
         select(func.count(models.AmountReservation.id)).where(
             models.AmountReservation.source_id == source.id

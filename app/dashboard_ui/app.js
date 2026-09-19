@@ -1,253 +1,612 @@
-const state = { csrf: "", overview: null, businesses: [], sources: [], intents: [], evidence: [], telegram: null, acceptanceSources: [], acceptance: null };
+const state = {
+  csrf: "",
+  overview: null,
+  stores: [],
+  businesses: [],
+  sources: [],
+  intents: [],
+  evidence: [],
+  telegram: null,
+  telegramChats: [],
+  acceptanceSources: [],
+  acceptance: null,
+  selectedStoreId: sessionStorage.getItem("khqr_selected_store") || "",
+  selectedSourceId: "",
+  creatingStore: false,
+  replacingKhqr: false,
+  telegramAuthStep: "phone",
+};
+
 let acceptanceScanTimer = null;
 let acceptanceClockTimer = null;
-const $ = (id) => document.getElementById(id);
-const pages = ["overview", "setup", "businesses", "payments", "test", "system"];
+
+const $ = id => document.getElementById(id);
+const pages = ["home", "setup", "test", "activity", "advanced"];
 
 function esc(value) {
   return String(value ?? "")
-    .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;").replaceAll('"', "&quot;")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
+
 function money(minor, currency) {
-  currency = currency || "USD";
   const value = Number(minor || 0) / 100;
-  return currency === "USD" ? "$" + value.toFixed(2) : value.toFixed(2) + " " + currency;
+  return (currency || "USD") === "USD"
+    ? "$" + value.toFixed(2)
+    : Math.round(value) + " KHR";
 }
+
 function dt(value) {
   if (!value) return "—";
-  try { return new Date(value).toLocaleString(); } catch { return String(value); }
+  try { return new Date(value).toLocaleString(); }
+  catch { return String(value); }
 }
-function badge(value) {
-  const text = String(value || "unknown");
-  const key = text.toLowerCase();
-  let cls = "";
-  if (["paid","ready","received","success","active"].some(v => key.includes(v))) cls = "good";
-  else if (["shadow","pending","partial","disabled"].some(v => key.includes(v))) cls = "warn";
-  else if (["failed","quarantine","error","invalid"].some(v => key.includes(v))) cls = "bad";
-  return '<span class="pill ' + cls + '">' + esc(text) + '</span>';
+
+function slugify(value) {
+  return String(value || "").toLowerCase().normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function badge(text, kind) {
+  return '<span class="pill ' + esc(kind || "") + '">' + esc(text) + "</span>";
+}
+
+function checkRow(done, title, detail) {
+  return '<div class="check-row ' + (done ? "done" : "") + '">' +
+    '<span class="check-icon">' + (done ? "✓" : "!") + "</span>" +
+    '<div class="check-copy"><strong>' + esc(title) + "</strong><span>" +
+    esc(detail) + "</span></div></div>";
+}
+
+function notice(message, danger) {
+  const good = $("globalNotice");
+  const bad = $("globalError");
+  good.classList.add("hidden");
+  bad.classList.add("hidden");
+  const target = danger ? bad : good;
+  target.textContent = message;
+  target.classList.remove("hidden");
+  window.setTimeout(() => target.classList.add("hidden"), 6000);
 }
 
 async function api(path, options) {
   options = options || {};
-  const headers = Object.assign({ "Content-Type": "application/json" }, options.headers || {});
-  if (state.csrf && options.method && options.method !== "GET") headers["X-CSRF-Token"] = state.csrf;
-  const response = await fetch(path, Object.assign({ credentials: "same-origin" }, options, { headers }));
+  const headers = Object.assign({}, options.headers || {});
+  if (options.body !== undefined && !(options.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (state.csrf && options.method && options.method !== "GET") {
+    headers["X-CSRF-Token"] = state.csrf;
+  }
+  const response = await fetch(path, Object.assign(
+    { credentials: "same-origin" },
+    options,
+    { headers }
+  ));
   let body = {};
   try { body = await response.json(); } catch {}
-  if (response.status === 401) { showLogin(); throw new Error("Dashboard session expired"); }
+  if (response.status === 401) {
+    showLogin();
+    throw new Error("Your dashboard session expired. Sign in again.");
+  }
   if (!response.ok) {
-    const detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body);
+    const detail = typeof body.detail === "string"
+      ? body.detail
+      : JSON.stringify(body.detail || body);
     throw new Error(detail || "Request failed (" + response.status + ")");
   }
   return body;
 }
-function notice(message, danger) {
-  const good = $("globalNotice"), bad = $("globalError");
-  good.classList.add("hidden"); bad.classList.add("hidden");
-  const target = danger ? bad : good;
-  target.textContent = message; target.classList.remove("hidden");
-  window.setTimeout(() => target.classList.add("hidden"), 5000);
-}
+
 function showLogin() {
   stopAcceptanceLoops();
-  $("appView").classList.add("hidden"); $("loginView").classList.remove("hidden"); state.csrf = "";
+  $("appView").classList.add("hidden");
+  $("loginView").classList.remove("hidden");
+  state.csrf = "";
 }
+
 function showApp() {
-  $("loginView").classList.add("hidden"); $("appView").classList.remove("hidden");
+  $("loginView").classList.add("hidden");
+  $("appView").classList.remove("hidden");
 }
+
 function setPage(name) {
   if (!pages.includes(name)) return;
-  pages.forEach(page => $("page-" + page).classList.toggle("active", page === name));
-  document.querySelectorAll(".nav-item").forEach(button => button.classList.toggle("active", button.dataset.page === name));
-  $("pageTitle").textContent = name.charAt(0).toUpperCase() + name.slice(1);
-}
-function checkRow(done, title, detail) {
-  return '<div class="check-row ' + (done ? "done" : "") + '">' +
-    '<span class="check-icon">' + (done ? "✓" : "!") + '</span>' +
-    '<div class="check-copy"><strong>' + esc(title) + '</strong><span>' + esc(detail) + '</span></div></div>';
-}
-function metric(label, value, note) {
-  return '<div class="metric"><span>' + esc(label) + '</span><strong>' + esc(value) +
-    '</strong><small>' + esc(note) + '</small></div>';
+  pages.forEach(page => {
+    $("page-" + page).classList.toggle("active", page === name);
+  });
+  document.querySelectorAll(".nav-item").forEach(button => {
+    button.classList.toggle("active", button.dataset.page === name);
+  });
+  const titles = {
+    home: "Home",
+    setup: "Setup",
+    test: "Test payment",
+    activity: "Activity",
+    advanced: "Advanced",
+  };
+  $("pageTitle").textContent = titles[name] || name;
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function renderOverview() {
-  const o = state.overview; if (!o) return;
-  const t = o.totals;
-  const shadow = Number(o.runtime.evidence.SHADOW || 0);
-  const pending = Number(o.runtime.intents.PENDING || 0) + Number(o.runtime.intents.PARTIALLY_PAID || 0);
-  $("metricGrid").innerHTML =
-    metric("Businesses", t.businesses, "Consuming projects") +
-    metric("Sources", t.sources, t.ready_sources + " ready") +
-    metric("Shadow evidence", shadow, "Observed safely") +
-    metric("Pending intents", pending, t.allocations + " allocations");
+function selectedStore() {
+  if (state.creatingStore) return null;
+  if (state.selectedStoreId) {
+    const selected = state.stores.find(row => row.id === state.selectedStoreId);
+    if (selected) return selected;
+  }
+  return state.stores[0] || null;
+}
 
-  const s = o.setup;
-  $("setupStage").textContent = s.stage.replaceAll("_", " ");
-  $("wizardStage").textContent = s.stage.replaceAll("_", " ");
-  $("setupChecklist").innerHTML =
-    checkRow(s.internal_secret_safe, "Secure installation secret",
-      s.internal_secret_safe ? "Internal secret is hardened." : "Change INTERNAL_SECRET before exposure.") +
-    checkRow(s.business_count > 0, "Business created",
-      s.business_count ? s.business_count + " configured" : "Create the first consuming project.") +
-    checkRow(s.source_count > 0, "Payment source added",
-      s.source_count ? s.source_count + " configured" : "Add ABA/KHQR source identity.") +
-    checkRow(s.telegram_api_credentials, "Telegram API credentials",
-      s.telegram_api_credentials ? "API ID/hash configured." : "Set TELEGRAM_API_ID and TELEGRAM_API_HASH.") +
-    checkRow(s.telegram_session_exists && s.telegram_session_owner_only, "Dedicated Telegram session",
-      s.telegram_session_exists ? "Session exists with owner-only permissions." : "Bootstrap a dedicated collector session.");
-  const safety = o.safety;
-  const safe = safety.telegram_shadow_only && !safety.allow_live_telegram && !safety.allow_shadow_promotion;
+function primaryBusiness() {
+  const store = selectedStore();
+  if (store) return store;
+  return state.businesses.find(row => row.is_active) || state.businesses[0] || null;
+}
+
+function primarySource() {
+  const store = selectedStore();
+  if (store && store.source) return store.source;
+  if (state.selectedSourceId) {
+    const selected = state.sources.find(row => row.id === state.selectedSourceId);
+    if (selected) return selected;
+  }
+  return state.sources[0] || null;
+}
+
+function setupState() {
+  const business = selectedStore();
+  const source = business && business.source ? business.source : null;
+  const storeReady = Boolean(business);
+  const paymentReady = Boolean(source && source.khqr_valid && source.khqr_image_configured);
+  const telegramAccountReady = Boolean(
+    state.telegram && state.telegram.api_credentials && state.telegram.authorized
+  );
+  const telegramReady = Boolean(
+    source && telegramAccountReady &&
+    source.telegram_group_id !== null &&
+    source.telegram_sender_id !== null
+  );
+  const testPassed = Boolean(source && state.intents.some(row => row.source_id === source.id && row.status === "TEST_VERIFIED"));
+  return {
+    business, source, storeReady, paymentReady,
+    telegramAccountReady, telegramReady, testPassed,
+    completed: [storeReady, paymentReady, telegramReady, testPassed].filter(Boolean).length,
+  };
+}
+
+function renderGlobalStoreSelector() {
+  const label = $("globalStoreLabel");
+  const select = $("globalStoreSelect");
+  if (!state.stores.length) {
+    label.classList.add("hidden");
+    select.innerHTML = "";
+    return;
+  }
+  label.classList.remove("hidden");
+  select.innerHTML = state.stores.map(row =>
+    '<option value="' + esc(row.id) + '">' + esc(row.name) + '</option>'
+  ).join("");
+  const currentId = state.selectedStoreId || state.stores[0].id;
+  if (state.stores.some(row => row.id === currentId)) {
+    select.value = currentId;
+  }
+}
+
+function renderHome() {
+  if (!state.overview) return;
+  const s = setupState();
+  const allReady = s.storeReady && s.paymentReady && s.telegramReady;
+  let headline = "Finish your payment setup";
+  let summary = "We will guide you through the remaining steps.";
+  let nextPage = "setup";
+  let nextLabel = "Continue setup";
+
+  if (allReady && !s.testPassed) {
+    headline = "Your setup is ready for a real test";
+    summary = "Send a small test payment to prove the complete flow before activation.";
+    nextPage = "test";
+    nextLabel = "Test a payment";
+  } else if (s.testPassed) {
+    headline = "Payment verification is working";
+    summary = "Your real payment test passed. Production activation remains a separate advanced step.";
+    nextPage = "activity";
+    nextLabel = "View activity";
+  }
+
+  $("homeHeadline").textContent = headline;
+  $("homeSummary").textContent = summary;
+  $("homeNextButton").textContent = nextLabel;
+  $("homeNextButton").dataset.goto = nextPage;
+
+  $("homeProgress").innerHTML =
+    checkRow(s.storeReady, "Store", s.storeReady ? s.business.name : "Add your store name") +
+    checkRow(s.paymentReady, "KHQR payment account",
+      s.paymentReady ? "Uploaded KHQR verified for " + (s.source.khqr_merchant_name || s.source.merchant_alias || "merchant") : "Upload your store's static KHQR image") +
+    checkRow(s.telegramReady, "Telegram notifications",
+      s.telegramReady ? "Payment group connected and ABA sender recognized" : "Connect the Telegram payment group") +
+    checkRow(s.testPassed, "Real payment test",
+      s.testPassed ? "Passed" : "Send one small payment when setup is ready");
+
+  const safe = state.overview.safety.telegram_shadow_only &&
+    !state.overview.safety.allow_live_telegram &&
+    !state.overview.safety.allow_shadow_promotion;
+  $("homeStatus").innerHTML =
+    checkRow(safe, "Safe test mode", safe ? "Testing cannot fulfill products or promote payments." : "Advanced live controls are enabled.") +
+    checkRow(Boolean(s.source && !s.source.enabled), "Live source is off",
+      s.source && !s.source.enabled ? "Setup changes are safe." : "No source yet or source is enabled.") +
+    checkRow(Boolean(state.telegram && state.telegram.authorized), "Telegram account",
+      state.telegram && state.telegram.authorized ? "Connected." : "Not connected yet.");
+
   $("safetyDot").style.background = safe ? "var(--success)" : "var(--danger)";
-  $("safetyLabel").textContent = safe ? "Safe shadow defaults" : "Live fuse enabled";
-  $("apiHealth").textContent = "API · healthy"; $("apiHealth").className = "pill good";
+  $("safetyLabel").textContent = safe ? "Safe test mode" : "Advanced live mode";
+  $("apiHealth").textContent = "Online";
+  $("apiHealth").className = "pill good";
 
-  const safetyRows = [
-    ["Shadow-only collector", safety.telegram_shadow_only, safety.telegram_shadow_only ? "Enabled" : "Disabled"],
-    ["Live Telegram fuse", !safety.allow_live_telegram, safety.allow_live_telegram ? "LIVE ENABLED" : "Off"],
-    ["Shadow promotion fuse", !safety.allow_shadow_promotion, safety.allow_shadow_promotion ? "PROMOTION ENABLED" : "Off"],
-    ["Checkout TTL", true, (safety.checkout_ttl_seconds / 60) + " minutes"],
-    ["Late-match grace", true, (safety.late_match_grace_seconds / 60) + " minutes"]
+  const recentRows = s.source
+    ? state.evidence.filter(row => row.source_id === s.source.id).slice(0, 6)
+    : [];
+  renderEvidenceTable("homeRecent", recentRows, true);
+}
+
+function renderSetupStepper() {
+  const s = setupState();
+  const steps = [
+    ["1", "Store", s.storeReady],
+    ["2", "KHQR", s.paymentReady],
+    ["3", "Telegram", s.telegramReady],
+    ["4", "Test", s.testPassed],
   ];
-  $("safetyCards").innerHTML = safetyRows.map(row =>
-    '<div class="safety-row"><span class="check-icon" style="color:' +
-    (row[1] ? "var(--success)" : "var(--danger)") + '">' + (row[1] ? "✓" : "!") +
-    '</span><div class="check-copy"><strong>' + esc(row[0]) + '</strong><span>' +
-    esc(row[2]) + '</span></div></div>').join("");
+  $("setupStepper").innerHTML = steps.map(row =>
+    '<div class="setup-step-chip ' + (row[2] ? "done" : "") + '">' +
+    '<span>' + row[0] + "</span><strong>" + esc(row[1]) + "</strong></div>"
+  ).join("");
+  $("setupProgressBadge").textContent = s.completed + " / 4";
+}
 
-  renderEvidenceTable("overviewEvidence", o.recent_evidence, true);
-  renderSetupDetails(); renderSystem();
+function renderStoreSetup() {
+  const select = $("setupStoreSelect");
+  const form = $("storeForm");
+  const ready = $("storeReady");
+
+  if (!state.stores.length) {
+    state.creatingStore = true;
+    select.innerHTML = '<option value="">No stores yet</option>';
+    select.disabled = true;
+  } else {
+    select.disabled = false;
+    select.innerHTML = state.stores.map(row =>
+      '<option value="' + esc(row.id) + '">' + esc(row.name) + '</option>'
+    ).join("");
+    if (!state.stores.some(row => row.id === state.selectedStoreId)) {
+      state.selectedStoreId = state.stores[0].id;
+      sessionStorage.setItem("khqr_selected_store", state.selectedStoreId);
+    }
+    select.value = state.selectedStoreId;
+  }
+
+  const store = selectedStore();
+  if (state.creatingStore || !store) {
+    form.dataset.mode = "create";
+    if (form.dataset.renderedMode !== "create") {
+      form.reset();
+      form.elements.currency.value = "USD";
+      form.dataset.renderedMode = "create";
+    }
+    $("saveStoreButton").textContent = "Create store";
+    $("cancelStoreEdit").classList.toggle("hidden", !state.stores.length);
+    ready.classList.add("hidden");
+    $("storeStepBadge").textContent = "New store";
+    $("storeStepBadge").className = "pill accent";
+    return;
+  }
+
+  form.dataset.mode = "edit";
+  if (form.dataset.renderedStore !== store.id || form.dataset.renderedMode !== "edit") {
+    form.elements.name.value = store.name || "";
+    form.elements.currency.value = (store.source && store.source.currency) || "USD";
+    form.elements.webhook_url.value = store.webhook_url || "";
+    form.dataset.renderedStore = store.id;
+    form.dataset.renderedMode = "edit";
+  }
+  $("saveStoreButton").textContent = "Save changes";
+  $("cancelStoreEdit").classList.add("hidden");
+  ready.classList.remove("hidden");
+  ready.innerHTML = '<div><span class="pill good">Selected</span><h3>' +
+    esc(store.name) + '</h3><p class="muted">You can edit this store or create another one.</p></div>';
+  $("storeStepBadge").textContent = "Ready";
+  $("storeStepBadge").className = "pill good";
 }
-function renderSetupDetails() {
-  const s = state.overview && state.overview.setup; if (!s) return;
+
+function renderPaymentSetup() {
+  const store = selectedStore();
+  const source = store && store.source ? store.source : null;
+  const form = $("khqrUploadForm");
+  const preview = $("paymentPreview");
+  const ready = Boolean(source && source.khqr_valid && source.khqr_image_configured);
+
+  Array.from(form.elements).forEach(el => { el.disabled = !source; });
+
+  if (!source) {
+    form.classList.remove("hidden");
+    preview.classList.add("hidden");
+    $("paymentStepBadge").textContent = "Create store first";
+    $("paymentStepBadge").className = "pill warn";
+    $("khqrSelectedFile").textContent = "Create or select a store before uploading KHQR.";
+    return;
+  }
+
+  if (ready) {
+    preview.classList.remove("hidden");
+    $("paymentPreviewQr").src = source.khqr_image_url + "?v=" + Date.now();
+    $("paymentPreviewName").textContent = source.khqr_merchant_name || source.merchant_alias || store.name;
+    $("paymentPreviewAccount").textContent = "Verified static KHQR · " + source.currency;
+    $("paymentPreviewBadge").textContent = "Uploaded KHQR verified";
+    $("paymentStepBadge").textContent = "Ready";
+    $("paymentStepBadge").className = "pill good";
+    form.classList.toggle("hidden", !state.replacingKhqr);
+  } else {
+    preview.classList.add("hidden");
+    form.classList.remove("hidden");
+    $("paymentStepBadge").textContent = "Upload QR";
+    $("paymentStepBadge").className = "pill warn";
+  }
+
+  if (!$("khqrImageInput").files.length) {
+    $("khqrSelectedFile").textContent = ready
+      ? "Choose a replacement image if you want to change this store's KHQR."
+      : "Upload the static QR image customers normally scan.";
+  }
+}
+
+function renderTelegramSetup() {
   const tg = state.telegram || {};
+  const source = primarySource();
+
+  $("telegramCredentialsForm").classList.toggle("hidden", Boolean(tg.api_credentials));
+
+  const showPhone = Boolean(tg.api_credentials && !tg.authorized && state.telegramAuthStep === "phone");
+  $("telegramPhoneForm").classList.toggle("hidden", !showPhone);
+  $("telegramCodeForm").classList.toggle("hidden", state.telegramAuthStep !== "code");
+  $("telegramPasswordForm").classList.toggle("hidden", state.telegramAuthStep !== "password");
+  $("telegramGroupPanel").classList.toggle("hidden", !(tg.authorized && source));
+
+  const groupReady = Boolean(source && source.telegram_group_id !== null);
+  const senderReady = Boolean(source && source.telegram_sender_id !== null);
+
   $("telegramSetupState").innerHTML =
-    checkRow(s.telegram_api_credentials, "API credentials", s.telegram_api_credentials ? "Configured in environment." : "Add Telegram API ID and hash.") +
-    checkRow(Boolean(tg.authorized), "Dedicated Telegram session", tg.authorized ? "Authorized account connected." : "Connect the collector account below.") +
-    checkRow(Boolean(tg.owner_only), "Session permissions", tg.owner_only ? "Mode 0600." : "Session file must be owner-only.");
-  $("telegramPhoneForm").classList.toggle("hidden", Boolean(tg.authorized));
-  $("telegramCodeForm").classList.add("hidden");
-  $("telegramPasswordForm").classList.add("hidden");
-  const shadow = Number(state.overview.runtime.evidence.SHADOW || 0);
-  $("verificationState").innerHTML =
-    checkRow(s.configured_source_count > 0, "Source identity complete", s.configured_source_count + "/" + s.source_count + " fully configured") +
-    checkRow(shadow > 0, "SHADOW observations", shadow ? shadow + " evidence rows observed" : "No SHADOW evidence yet") +
-    checkRow(s.ready_source_count > 0, "Live-ready source", s.ready_source_count ? s.ready_source_count + " enabled and ready" : "No source is live yet");
+    checkRow(Boolean(tg.api_credentials), "Telegram API", tg.api_credentials ? "Saved" : "Add API ID and hash below") +
+    checkRow(Boolean(tg.authorized), "Telegram account", tg.authorized ? "Connected" : "Sign in with your phone number") +
+    checkRow(groupReady, "Payment group", groupReady ? "Selected" : "Choose the group that receives ABA notifications") +
+    checkRow(senderReady, "ABA notifications", senderReady ? "Recognized automatically" : "We will detect the trusted sender");
+
+  const ready = Boolean(tg.authorized && groupReady && senderReady);
+  $("telegramStepBadge").textContent = ready ? "Ready" : "Not set";
+  $("telegramStepBadge").className = "pill " + (ready ? "good" : "warn");
+
+  renderTelegramGroupOptions();
 }
-function renderBusinesses() {
-  const target = $("businessList");
-  target.innerHTML = state.businesses.length ? state.businesses.map(row =>
-    '<article class="entity-card"><div><div class="entity-title"><h3>' + esc(row.name) + '</h3>' +
-    (row.is_active ? badge("active") : badge("inactive")) + '</div><div class="entity-meta">' +
-    '<span>slug · ' + esc(row.slug) + '</span><span>' + esc(row.source_count) + ' source(s)</span>' +
-    '<span>webhook · ' + (row.webhook_configured ? "configured" : "not set") +
-    '</span></div></div></article>').join("") :
-    '<div class="empty-state">No businesses yet. Use Setup to create one.</div>';
-  $("sourceBusiness").innerHTML = state.businesses.length ?
-    state.businesses.map(row => '<option value="' + esc(row.id) + '">' + esc(row.name) + '</option>').join("") :
-    '<option value="">Create a business first</option>';
+
+function renderTelegramGroupOptions() {
+  const select = $("telegramGroupSelect");
+  const source = primarySource();
+  const currentId = source && source.telegram_group_id !== null
+    ? String(source.telegram_group_id)
+    : "";
+
+  if (state.telegramChats.length) {
+    select.innerHTML = '<option value="">Choose a group…</option>' +
+      state.telegramChats.map(row =>
+        '<option value="' + esc(row.id) + '">' + esc(row.title) + "</option>"
+      ).join("");
+    if (state.telegramChats.some(row => String(row.id) === currentId)) {
+      select.value = currentId;
+    }
+  } else if (currentId) {
+    select.innerHTML = '<option value="' + esc(currentId) + '">Current payment group</option>';
+  } else {
+    select.innerHTML = '<option value="">Load your Telegram groups first</option>';
+  }
 }
-function renderSources() {
-  const target = $("sourceList");
-  if (!state.sources.length) { target.innerHTML = '<div class="empty-state">No payment sources configured.</div>'; return; }
-  target.innerHTML = state.sources.map(row => {
-    const status = row.ready ? "ready" : row.enabled ? "invalid" : "disabled";
-    return '<article class="entity-card"><div><div class="entity-title"><h3>' + esc(row.name) + '</h3>' +
-      badge(status) + '</div><div class="entity-meta"><span>' + esc(row.currency) + '</span>' +
-      '<span>group · ' + esc(row.telegram_group_id ?? "not set") + '</span>' +
-      '<span>sender · ' + esc(row.telegram_sender_id ?? "not set") + '</span>' +
-      '<span>KHQR · ' + (row.static_khqr_configured ? "configured" : "missing") + '</span></div></div>' +
-      '<div class="entity-actions">' +
-      (!row.enabled && row.telegram_group_id ? '<button class="btn secondary small" data-discover="' + esc(row.id) + '">Discover sender</button>' : '') +
-      (!row.enabled ? '<button class="btn secondary small" data-sender="' + esc(row.id) + '">Set sender</button>' : '') +
-      '<button class="btn ' + (row.enabled ? "danger" : "secondary") + ' small" data-toggle="' + esc(row.id) +
-      '" data-enabled="' + row.enabled + '">' + (row.enabled ? "Disable" : "Enable") + '</button></div></article>';
-  }).join("");
+
+function renderReadySetup() {
+  const s = setupState();
+  const setupReady = s.storeReady && s.paymentReady && s.telegramReady;
+  $("setupReadyState").innerHTML =
+    checkRow(s.storeReady, "Store", s.storeReady ? "Ready" : "Finish step 1") +
+    checkRow(s.paymentReady, "KHQR", s.paymentReady ? "Valid and scannable" : "Finish step 2") +
+    checkRow(s.telegramReady, "Telegram", s.telegramReady ? "Payment group connected" : "Finish step 3");
+  $("goToTestButton").disabled = !setupReady;
+  $("readyStepBadge").textContent = s.testPassed ? "Passed" : (setupReady ? "Ready to test" : "Waiting");
+  $("readyStepBadge").className = "pill " + (s.testPassed ? "good" : setupReady ? "accent" : "warn");
 }
+
+function renderSetup() {
+  renderSetupStepper();
+  renderStoreSetup();
+  renderPaymentSetup();
+  renderTelegramSetup();
+  renderReadySetup();
+}
+
+function statusLabel(status) {
+  const map = {
+    TEST_WAITING: "Test waiting",
+    TEST_VERIFIED: "Test passed",
+    TEST_MISMATCH: "Test needs attention",
+    TEST_EXPIRED: "Test expired",
+    TEST_CANCELLED: "Test cancelled",
+    PENDING: "Awaiting payment",
+    PARTIALLY_PAID: "Partially paid",
+    PAID: "Paid",
+  };
+  return map[status] || String(status || "Unknown").replaceAll("_", " ").toLowerCase();
+}
+
+function evidenceLabel(stateName) {
+  const map = {
+    SHADOW: "Observed",
+    RECEIVED: "Received",
+    ALLOCATED: "Matched",
+    QUARANTINED: "Needs review",
+  };
+  return map[stateName] || String(stateName || "Observed");
+}
+
 function renderEvidenceTable(targetId, rows, compact) {
   const target = $(targetId);
-  if (!rows || !rows.length) { target.innerHTML = '<div class="empty-state">No payment evidence yet.</div>'; return; }
-  let head = '<thead><tr><th>Transaction</th><th>Amount</th><th>State</th>' +
-    (compact ? '' : '<th>Transport</th>') + '<th>Received</th></tr></thead>';
-  let body = rows.map(row => '<tr><td><code>' + esc(row.trx) + '</code></td><td>' +
-    esc(money(row.amount_minor, row.currency)) + '</td><td>' + badge(row.state) + '</td>' +
-    (compact ? '' : '<td>' + esc(row.transport) + '</td>') + '<td>' + esc(dt(row.received_at)) + '</td></tr>').join("");
-  target.innerHTML = '<table>' + head + '<tbody>' + body + '</tbody></table>';
-}
-function renderIntents() {
-  const target = $("intentTable");
-  if (!state.intents.length) target.innerHTML = '<div class="empty-state">No payment intents yet.</div>';
-  else {
-    const rows = state.intents.map(row => '<tr><td>' + esc(row.external_id) + '</td><td>' +
-      esc(money(row.amount_minor, row.currency)) + '</td><td>' + badge(row.status) +
-      '</td><td>' + esc(dt(row.created_at)) + '</td></tr>').join("");
-    target.innerHTML = '<table><thead><tr><th>External ID</th><th>Amount</th><th>Status</th><th>Created</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  if (!rows || !rows.length) {
+    target.innerHTML = '<div class="empty-state">No payment notifications yet.</div>';
+    return;
   }
-  renderEvidenceTable("evidenceTable", state.evidence, false);
+  const body = rows.map(row =>
+    "<tr><td><code>" + esc(row.trx || "—") + "</code></td><td>" +
+    esc(money(row.amount_minor, row.currency)) + "</td><td>" +
+    badge(evidenceLabel(row.state), row.state === "QUARANTINED" ? "bad" : "good") +
+    "</td><td>" + esc(dt(row.received_at)) + "</td></tr>"
+  ).join("");
+  target.innerHTML = '<table><thead><tr><th>Transaction</th><th>Amount</th><th>Result</th><th>Time</th></tr></thead><tbody>' +
+    body + "</tbody></table>";
 }
-function renderSystem() {
-  const o = state.overview; if (!o) return;
-  const r = o.runtime;
-  const defs = [
-    ["Evidence states", Object.entries(r.evidence).map(x => x[0] + ":" + x[1]).join(" · ") || "none"],
-    ["Intent states", Object.entries(r.intents).map(x => x[0] + ":" + x[1]).join(" · ") || "none"],
-    ["Webhook queue", Object.entries(r.outbox).map(x => x[0] + ":" + x[1]).join(" · ") || "empty"],
-    ["Reservations", (o.safety.reservation_seconds / 60) + " minutes total"]
-  ];
-  $("runtimeDetails").innerHTML = defs.map(row => '<div class="definition-row"><span>' +
-    esc(row[0]) + '</span><strong>' + esc(row[1]) + '</strong></div>').join("");
-  const s = o.setup;
+
+function renderActivity() {
+  const source = primarySource();
+  const intents = source
+    ? state.intents.filter(row => row.source_id === source.id)
+    : [];
+  const evidence = source
+    ? state.evidence.filter(row => row.source_id === source.id)
+    : [];
+  const intentTarget = $("intentTable");
+  if (!intents.length) {
+    intentTarget.innerHTML = '<div class="empty-state">No payment tests yet.</div>';
+  } else {
+    const rows = intents.map(row => {
+      const kind = row.status === "TEST_VERIFIED" || row.status === "PAID"
+        ? "good"
+        : row.status === "TEST_EXPIRED" || row.status === "TEST_MISMATCH"
+          ? "bad" : "warn";
+      return "<tr><td>" + esc(row.external_id || "Payment") + "</td><td>" +
+        esc(money(row.amount_minor, row.currency)) + "</td><td>" +
+        badge(statusLabel(row.status), kind) + "</td><td>" +
+        esc(dt(row.created_at)) + "</td></tr>";
+    }).join("");
+    intentTarget.innerHTML = '<table><thead><tr><th>Payment</th><th>Amount</th><th>Status</th><th>Time</th></tr></thead><tbody>' +
+      rows + "</tbody></table>";
+  }
+  renderEvidenceTable("evidenceTable", evidence, false);
+}
+
+function renderAdvanced() {
+  const businessTarget = $("businessList");
+  businessTarget.innerHTML = state.businesses.length
+    ? state.businesses.map(row =>
+      '<article class="entity-card"><div><div class="entity-title"><h3>' +
+      esc(row.name) + "</h3>" + badge(row.is_active ? "active" : "inactive", row.is_active ? "good" : "warn") +
+      '</div><div class="entity-meta"><span>slug · ' + esc(row.slug) +
+      "</span><span>" + esc(row.source_count) + " payment source(s)</span><span>webhook · " +
+      (row.webhook_configured ? "configured" : "not set") + "</span></div></div></article>"
+    ).join("")
+    : '<div class="empty-state">No store yet.</div>';
+
+  const sourceTarget = $("sourceList");
+  sourceTarget.innerHTML = state.sources.length
+    ? state.sources.map(row => {
+      const status = row.enabled ? "enabled" : row.khqr_valid ? "configured" : "incomplete";
+      return '<article class="entity-card"><div><div class="entity-title"><h3>' +
+        esc(row.name) + "</h3>" + badge(status, row.enabled ? "bad" : row.khqr_valid ? "good" : "warn") +
+        '</div><div class="entity-meta"><span>currency · ' + esc(row.currency) +
+        "</span><span>group · " + esc(row.telegram_group_id ?? "not set") +
+        "</span><span>sender · " + esc(row.telegram_sender_id ?? "not set") +
+        "</span><span>KHQR · " + (row.khqr_valid ? "valid" : row.khqr_error || "missing") +
+        '</span></div></div><div class="entity-actions">' +
+        (!row.enabled && row.telegram_group_id
+          ? '<button class="btn secondary small" data-discover="' + esc(row.id) + '">Rediscover sender</button>'
+          : "") +
+        '<button class="btn ' + (row.enabled ? "danger" : "secondary") +
+        ' small" data-toggle="' + esc(row.id) + '" data-enabled="' + row.enabled + '">' +
+        (row.enabled ? "Disable live source" : "Enable live source") +
+        "</button></div></article>";
+    }).join("")
+    : '<div class="empty-state">No payment source yet.</div>';
+
+  if (!state.overview) return;
+  const runtime = state.overview.runtime;
+  $("runtimeDetails").innerHTML = [
+    ["Evidence", Object.entries(runtime.evidence).map(x => x[0] + ":" + x[1]).join(" · ") || "none"],
+    ["Payment intents", Object.entries(runtime.intents).map(x => x[0] + ":" + x[1]).join(" · ") || "none"],
+    ["Webhook queue", Object.entries(runtime.outbox).map(x => x[0] + ":" + x[1]).join(" · ") || "empty"],
+  ].map(row => '<div class="definition-row"><span>' + esc(row[0]) +
+    "</span><strong>" + esc(row[1]) + "</strong></div>").join("");
+
+  const o = state.overview;
   $("securityDetails").innerHTML =
-    checkRow(s.internal_secret_safe, "Internal secret hardened", s.internal_secret_safe ? "Not using development default." : "Change INTERNAL_SECRET.") +
-    checkRow(s.dashboard_cookie_secure, "Secure dashboard cookie", s.dashboard_cookie_secure ? "HTTPS-only cookie enabled." : "Enable DASHBOARD_COOKIE_SECURE behind HTTPS.") +
-    checkRow(!o.safety.allow_live_telegram, "Live Telegram fuse off", "Safe default until intentional activation.") +
-    checkRow(!o.safety.allow_shadow_promotion, "Shadow promotion fuse off", "No SHADOW evidence can settle.");
+    checkRow(o.setup.internal_secret_safe, "Dashboard secret", o.setup.internal_secret_safe ? "Hardened" : "Needs attention") +
+    checkRow(o.setup.dashboard_cookie_secure, "Secure cookie", o.setup.dashboard_cookie_secure ? "HTTPS only" : "Not HTTPS only") +
+    checkRow(!o.safety.allow_live_telegram, "Live Telegram", o.safety.allow_live_telegram ? "Enabled" : "Off") +
+    checkRow(!o.safety.allow_shadow_promotion, "Automatic promotion", o.safety.allow_shadow_promotion ? "Enabled" : "Off");
 }
+
+function acceptanceSourcesForStore() {
+  const source = primarySource();
+  if (!source) return [];
+  return state.acceptanceSources.filter(row => row.source_id === source.id);
+}
+
 function selectedAcceptanceSource() {
+  const rows = acceptanceSourcesForStore();
   const select = $("acceptanceSource");
   const selected = select ? select.value : "";
-  return state.acceptanceSources.find(row => row.source_id === selected)
-    || state.acceptanceSources[0]
+  return rows.find(row => row.source_id === selected)
+    || rows[0]
     || null;
 }
 
 function renderAcceptanceSetup() {
   const select = $("acceptanceSource");
-  if (!select) return;
   const previous = select.value;
-  if (!state.acceptanceSources.length) {
-    select.innerHTML = '<option value="">No sources configured</option>';
-    $("acceptanceChecklist").innerHTML = checkRow(false, "Payment source", "Create and configure a source first.");
+  const rows = acceptanceSourcesForStore();
+  if (!rows.length) {
+    select.innerHTML = '<option value="">Finish Setup first</option>';
+    $("acceptanceChecklist").innerHTML =
+      checkRow(false, "Setup", "Complete Store, KHQR and Telegram first");
     $("acceptanceStartButton").disabled = true;
     return;
   }
 
-  select.innerHTML = state.acceptanceSources.map(row =>
-    '<option value="' + esc(row.source_id) + '">' + esc(row.name) + ' · ' + esc(row.currency) + '</option>'
+  select.innerHTML = rows.map(row =>
+    '<option value="' + esc(row.source_id) + '">' + esc(row.name) + "</option>"
   ).join("");
-  if (state.acceptanceSources.some(row => row.source_id === previous)) select.value = previous;
+  if (rows.some(row => row.source_id === previous)) {
+    select.value = previous;
+  } else if (primarySource()) {
+    select.value = primarySource().id;
+  }
+
+  $("acceptanceSourceLabel").classList.toggle("hidden", rows.length === 1);
 
   const source = selectedAcceptanceSource();
-  const telegramReady = Boolean(state.telegram && state.telegram.authorized && state.telegram.owner_only);
-  const safety = state.overview ? state.overview.safety : {};
-  const safeFuses = Boolean(
-    safety.telegram_shadow_only
-    && !safety.allow_live_telegram
-    && !safety.allow_shadow_promotion
+  const telegramReady = Boolean(state.telegram && state.telegram.authorized);
+  const safe = Boolean(
+    state.overview &&
+    state.overview.safety.telegram_shadow_only &&
+    !state.overview.safety.allow_live_telegram &&
+    !state.overview.safety.allow_shadow_promotion
   );
+
   const checks = [
-    [source.configured, "Source configuration", source.configured ? "Complete" : "Complete all source identity fields"],
-    [source.disabled, "Normal source disabled", source.disabled ? "Acceptance test stays isolated" : "Disable the normal source first"],
-    [source.telegram_group, "Telegram payment group", source.telegram_group ? "Configured" : "Choose the merchant group"],
-    [source.trusted_sender, "Trusted ABA sender", source.trusted_sender ? "Configured" : "Run sender discovery"],
-    [source.merchant_alias, "Merchant alias", source.merchant_alias ? "Configured" : "Merchant name is required"],
-    [source.static_khqr, "Static KHQR", source.static_khqr ? "Configured" : "Add the merchant KHQR payload"],
-    [telegramReady, "Telegram session", telegramReady ? "Authorized and owner-only" : "Authorize the dedicated account"],
-    [safeFuses, "Safety fuses", safeFuses ? "SHADOW-only; live promotion off" : "Restore safe fuse defaults"],
+    [source.khqr_valid, "KHQR", source.khqr_valid ? "Valid and ready to scan" : "Rebuild the KHQR in Setup"],
+    [telegramReady, "Telegram account", telegramReady ? "Connected" : "Connect Telegram in Setup"],
+    [source.telegram_group, "Payment group", source.telegram_group ? "Selected" : "Choose the ABA notification group"],
+    [source.trusted_sender, "ABA notification sender", source.trusted_sender ? "Recognized" : "Finish group detection"],
+    [source.disabled, "Safe test mode", source.disabled ? "Live store remains off" : "Disable live source before testing"],
+    [safe, "No fulfillment during test", safe ? "Protected" : "Restore safe settings in Advanced"],
   ];
   $("acceptanceChecklist").innerHTML = checks.map(row => checkRow(row[0], row[1], row[2])).join("");
+
   const ready = checks.every(row => row[0]) && source.currency === "USD";
   $("acceptanceStartButton").disabled = !ready;
 }
@@ -256,10 +615,9 @@ function acceptanceTerminal(result) {
   return ["VERIFIED", "EXPIRED", "CANCELLED"].includes(String(result || ""));
 }
 
-function acceptanceResultClass(result) {
+function acceptanceResultKind(result) {
   if (result === "VERIFIED") return "good";
   if (result === "MISMATCH" || result === "EXPIRED") return "bad";
-  if (result === "CANCELLED") return "";
   return "warn";
 }
 
@@ -269,55 +627,57 @@ function renderAcceptanceLive() {
     $("acceptanceLive").classList.add("hidden");
     return;
   }
-
   $("acceptanceLive").classList.remove("hidden");
   $("acceptanceMerchant").textContent = test.merchant_alias || test.source_name || "Merchant";
   $("acceptancePayable").textContent = money(test.payable_amount_minor, test.currency);
   $("acceptanceRemark").textContent = test.remark || "—";
-  $("acceptanceQr").src = "/dashboard/api/acceptance-tests/"
-    + encodeURIComponent(test.intent_id) + "/qr.png?v=" + encodeURIComponent(test.intent_id);
+  $("acceptanceQr").src = "/dashboard/api/acceptance-tests/" +
+    encodeURIComponent(test.intent_id) + "/qr.png?v=" + encodeURIComponent(test.intent_id);
 
   const result = String(test.result || "WAITING");
-  const badge = $("acceptanceResultBadge");
-  badge.textContent = result;
-  badge.className = "pill " + acceptanceResultClass(result);
+  const badgeTarget = $("acceptanceResultBadge");
+  const labels = {
+    WAITING: "Waiting for payment",
+    VERIFIED: "Payment matched",
+    MISMATCH: "Needs attention",
+    EXPIRED: "Expired",
+    CANCELLED: "Cancelled",
+  };
+  badgeTarget.textContent = labels[result] || result;
+  badgeTarget.className = "pill " + acceptanceResultKind(result);
 
   const observed = Boolean(test.evidence_id);
-  const parsed = Boolean(test.trx_tail);
-  const matched = result === "VERIFIED";
-  const isolated = Boolean(test.webhook_suppressed && !test.source_enabled);
+  const verified = result === "VERIFIED";
   $("acceptanceTimeline").innerHTML =
-    checkRow(true, "Payment request created", "Exact amount fingerprint and Remark reserved") +
-    checkRow(true, "Merchant KHQR ready", "Use the configured static merchant QR") +
-    checkRow(isolated, "Test isolated from fulfillment", isolated ? "No allocation or webhook allowed" : "Isolation condition failed") +
-    checkRow(observed, "Telegram payment observed", observed ? "Trusted merchant notification found" : "Waiting for a new notification") +
-    checkRow(observed, "Trusted sender verified", observed ? "Notification sender matched source configuration" : "Pending") +
-    checkRow(parsed, "Transaction parsed", parsed ? "Trx ending " + test.trx_tail : "Pending") +
-    checkRow(matched, "Core matcher verified", matched ? "Match reason: " + (test.match_reason || "safe match") : (test.result_reason || "Waiting")) +
-    checkRow(Boolean(test.would_status), "Settlement preview", test.would_status ? "Would become " + test.would_status : "Not evaluated yet");
+    checkRow(true, "Test payment created", "QR, exact amount and payment note are ready") +
+    checkRow(observed, "Bank notification received", observed ? "Telegram saw the real payment" : "Waiting for your payment") +
+    checkRow(observed, "ABA notification recognized", observed ? "Trusted notification confirmed" : "Waiting") +
+    checkRow(verified, "Amount + note matched", verified ? "This payment belongs to this test" : (test.result_reason || "Waiting")) +
+    checkRow(Boolean(test.would_status), "Final check",
+      test.would_status === "PAID" ? "Would be accepted as paid" :
+      test.would_status ? "Would be " + test.would_status : "Waiting");
 
   const resultBox = $("acceptanceResult");
   if (result === "WAITING") {
     resultBox.classList.add("hidden");
   } else {
-    let title = result;
+    let title = "Test result";
     let detail = test.result_reason || "";
     if (result === "VERIFIED") {
-      const exact = Number(test.would_excess_minor || 0) === 0
-        && Number(test.observed_amount_minor || 0) === Number(test.payable_amount_minor || 0);
-      title = exact ? "PASS — exact payment verified" : "Payment matched with amount variance";
-      detail = "Observed " + money(test.observed_amount_minor, test.currency)
-        + " · expected " + money(test.payable_amount_minor, test.currency)
-        + " · settlement preview " + (test.would_status || "unknown");
+      title = "PASS — payment verification works";
+      detail = "The real bank notification matched the exact amount and payment note. Your live store is still off.";
     } else if (result === "MISMATCH") {
-      title = "Payment observed but not safely matched";
+      title = "Payment seen, but it did not match safely";
+      detail = "Check the exact amount and payment note. The test will keep watching during the grace window.";
     } else if (result === "EXPIRED") {
-      title = "Test window expired";
+      title = "Test expired";
+      detail = "Create a new test and pay within the timer.";
     } else if (result === "CANCELLED") {
       title = "Test cancelled";
+      detail = "No live store action was taken.";
     }
-    resultBox.innerHTML = '<strong>' + esc(title) + '</strong><span>' + esc(detail) + '</span>';
-    resultBox.className = "acceptance-result " + acceptanceResultClass(result);
+    resultBox.innerHTML = "<strong>" + esc(title) + "</strong><span>" + esc(detail) + "</span>";
+    resultBox.className = "acceptance-result " + acceptanceResultKind(result);
   }
 
   const terminal = acceptanceTerminal(result);
@@ -327,171 +687,302 @@ function renderAcceptanceLive() {
 }
 
 function updateAcceptanceClock() {
-  const test = state.acceptance;
-  if (!test) return;
+  if (!state.acceptance) return;
   const now = Date.now();
-  const checkout = new Date(test.checkout_expires_at).getTime();
-  const match = new Date(test.match_expires_at).getTime();
+  const checkout = new Date(state.acceptance.checkout_expires_at).getTime();
+  const match = new Date(state.acceptance.match_expires_at).getTime();
   const target = $("acceptanceTimer");
-
-  let remaining = 0;
-  let label = "";
-  let cls = "accent";
+  let remaining;
+  let prefix;
+  let kind = "accent";
   if (now < checkout) {
     remaining = checkout - now;
-    label = "Pay ";
+    prefix = "Pay ";
   } else if (now < match) {
     remaining = match - now;
-    label = "Late grace ";
-    cls = "warn";
+    prefix = "Grace ";
+    kind = "warn";
   } else {
     target.textContent = "Expired";
     target.className = "pill bad";
     return;
   }
-  const totalSeconds = Math.max(0, Math.floor(remaining / 1000));
-  const mm = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
-  const ss = String(totalSeconds % 60).padStart(2, "0");
-  target.textContent = label + mm + ":" + ss;
-  target.className = "pill " + cls;
-}
-
-async function refreshAcceptanceStatus() {
-  if (!state.acceptance || !state.acceptance.intent_id) return;
-  state.acceptance = await api("/dashboard/api/acceptance-tests/" + encodeURIComponent(state.acceptance.intent_id));
-  renderAcceptanceLive();
+  const seconds = Math.max(0, Math.floor(remaining / 1000));
+  target.textContent = prefix +
+    String(Math.floor(seconds / 60)).padStart(2, "0") + ":" +
+    String(seconds % 60).padStart(2, "0");
+  target.className = "pill " + kind;
 }
 
 async function refreshAll() {
   try {
     const values = await Promise.all([
-      api("/dashboard/api/overview"), api("/dashboard/api/businesses"), api("/dashboard/api/sources"),
-      api("/dashboard/api/intents?limit=80"), api("/dashboard/api/evidence?limit=80"),
-      api("/dashboard/api/telegram/status").catch(() => ({ authorized: false, owner_only: false })),
-      api("/dashboard/api/acceptance-tests/prerequisites").catch(() => [])
+      api("/dashboard/api/overview"),
+      api("/dashboard/api/stores"),
+      api("/dashboard/api/businesses"),
+      api("/dashboard/api/sources"),
+      api("/dashboard/api/intents?limit=80"),
+      api("/dashboard/api/evidence?limit=80"),
+      api("/dashboard/api/telegram/status").catch(() => ({
+        api_credentials: false, authorized: false, owner_only: false,
+      })),
+      api("/dashboard/api/acceptance-tests/prerequisites").catch(() => []),
     ]);
-    [state.overview, state.businesses, state.sources, state.intents, state.evidence, state.telegram, state.acceptanceSources] = values;
-    renderOverview(); renderBusinesses(); renderSources(); renderIntents(); renderAcceptanceSetup();
-  } catch (error) { notice(error.message || String(error), true); }
+    [
+      state.overview,
+      state.stores,
+      state.businesses,
+      state.sources,
+      state.intents,
+      state.evidence,
+      state.telegram,
+      state.acceptanceSources,
+    ] = values;
+
+    if (state.selectedStoreId &&
+        !state.stores.some(row => row.id === state.selectedStoreId)) {
+      state.selectedStoreId = "";
+    }
+    if (!state.selectedStoreId && state.stores.length && !state.creatingStore) {
+      state.selectedStoreId = state.stores[0].id;
+      sessionStorage.setItem("khqr_selected_store", state.selectedStoreId);
+    }
+    const currentStore = selectedStore();
+    state.selectedSourceId = currentStore && currentStore.source
+      ? currentStore.source.id
+      : "";
+
+    renderGlobalStoreSelector();
+    renderHome();
+    renderSetup();
+    renderAcceptanceSetup();
+    renderActivity();
+    renderAdvanced();
+  } catch (error) {
+    notice(error.message || String(error), true);
+  }
 }
+
 function showSecrets(data) {
-  const rows = [["Business ID", data.id], ["API key", data.api_key], ["Webhook secret", data.webhook_secret || "not generated"]];
+  const rows = [
+    ["Store ID", data.id],
+    ["API key", data.api_key],
+    ["Webhook secret", data.webhook_secret || "Not configured"],
+  ];
   $("secretContent").innerHTML = rows.map(row =>
-    '<div class="secret-row"><span>' + esc(row[0]) + '</span><code>' + esc(row[1]) +
-    '</code><button class="btn secondary small" type="button" data-copy="' + esc(row[1]) + '">Copy</button></div>').join("");
+    '<div class="secret-row"><span>' + esc(row[0]) + "</span><code>" +
+    esc(row[1]) + '</code><button class="btn secondary small" type="button" data-copy="' +
+    esc(row[1]) + '">Copy</button></div>'
+  ).join("");
   $("secretDialog").showModal();
 }
-async function createBusiness(form) {
+
+async function saveStore(form) {
   const data = Object.fromEntries(new FormData(form).entries());
-  if (!data.webhook_url) data.webhook_url = null;
-  const result = await api("/dashboard/api/businesses", { method: "POST", body: JSON.stringify(data) });
-  showSecrets(result); form.reset();
-  notice("Business created. Save the one-time credentials now."); await refreshAll();
-}
-async function createSource(form) {
-  const raw = Object.fromEntries(new FormData(form).entries());
-  const payload = Object.assign({}, raw, {
-    telegram_group_id: raw.telegram_group_id ? Number(raw.telegram_group_id) : null,
-    static_khqr: raw.static_khqr || null, merchant_alias: raw.merchant_alias || null
-  });
-  await api("/dashboard/api/sources", { method: "POST", body: JSON.stringify(payload) });
-  form.reset(); notice("Payment source created disabled."); await refreshAll();
-}
-async function setSender(sourceId) {
-  const raw = window.prompt("Trusted Telegram sender ID"); if (!raw) return;
-  const sender = Number(raw.trim());
-  if (!Number.isInteger(sender)) { notice("Sender ID must be an integer.", true); return; }
-  await api("/dashboard/api/sources/" + encodeURIComponent(sourceId) + "/sender",
-    { method: "POST", body: JSON.stringify({ telegram_sender_id: sender }) });
-  notice("Trusted sender updated while source remained disabled."); await refreshAll();
-}
-async function toggleSource(sourceId, enabled) {
-  let confirm = "";
-  if (!enabled) {
-    if (!window.confirm("Enable this source? Payment intents become available once configuration is complete.")) return;
-    confirm = window.prompt('Type "ENABLE SOURCE" to continue') || "";
-    if (confirm !== "ENABLE SOURCE") { notice("Activation cancelled.", true); return; }
-  }
-  await api("/dashboard/api/sources/" + encodeURIComponent(sourceId) + "/enabled",
-    { method: "POST", body: JSON.stringify({ enabled: !enabled, confirm: confirm }) });
-  notice(enabled ? "Source disabled." : "Source enabled."); await refreshAll();
-}
-function telegramMessage(message, danger) {
-  const target = $("telegramAuthMessage");
-  target.textContent = message || "";
-  target.style.color = danger ? "var(--danger)" : "var(--muted)";
-}
+  const payload = {
+    name: String(data.name || "").trim(),
+    currency: String(data.currency || "USD").toUpperCase(),
+    webhook_url: String(data.webhook_url || "").trim() || null,
+  };
+  if (!payload.name) throw new Error("Enter a store name.");
 
-async function loadTelegramChats() {
-  telegramMessage("Loading Telegram groups…");
-  const rows = await api("/dashboard/api/telegram/chats?limit=300");
-  $("telegramChatOptions").innerHTML = rows.map(row =>
-    '<option value="' + esc(row.id) + '" label="' + esc(row.title + " · " + row.type) + '"></option>'
-  ).join("");
-  telegramMessage(rows.length + " group/channel dialogs loaded. Select one in the source form.");
-}
+  const current = selectedStore();
+  const creating = state.creatingStore || !current;
+  const path = creating
+    ? "/dashboard/api/stores"
+    : "/dashboard/api/stores/" + encodeURIComponent(current.id);
+  const result = await api(path, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 
-async function discoverSender(sourceId) {
-  telegramMessage("Scanning recent payment notifications for a trusted sender…");
-  const result = await api("/dashboard/api/telegram/sources/" + encodeURIComponent(sourceId) + "/discover-sender", {
-    method: "POST", body: JSON.stringify({ limit: 300, apply: false })
-  });
-  if (!result.unanimous || !result.candidate_senders.length) {
-    throw new Error("No unanimous ABA sender found in recent group history.");
+  if (creating) {
+    state.selectedStoreId = result.id;
+    state.creatingStore = false;
+    sessionStorage.setItem("khqr_selected_store", result.id);
+    showSecrets(result);
+    notice("Store created. Next, upload this store's real KHQR image.");
+  } else {
+    notice("Store settings saved.");
   }
-  const candidate = result.candidate_senders[0];
-  const accepted = window.confirm(
-    "Found one unanimous sender across " + result.parsed_messages +
-    " parsed ABA notification(s). Bind sender " + candidate.sender_id + "?"
-  );
-  if (!accepted) return;
-  await api("/dashboard/api/sources/" + encodeURIComponent(sourceId) + "/sender", {
-    method: "POST", body: JSON.stringify({ telegram_sender_id: candidate.sender_id })
-  });
-  notice("Trusted Telegram sender discovered and bound while source stayed disabled.");
-  telegramMessage("Sender discovery complete.");
+  form.dataset.renderedStore = "";
+  form.dataset.renderedMode = "";
   await refreshAll();
+}
+
+function beginNewStore() {
+  state.creatingStore = true;
+  state.replacingKhqr = false;
+  $("storeForm").dataset.renderedMode = "";
+  renderSetup();
+}
+
+function cancelNewStore() {
+  state.creatingStore = false;
+  $("storeForm").dataset.renderedMode = "";
+  renderSetup();
+}
+
+function selectStore(storeId) {
+  if (!state.stores.some(row => row.id === storeId)) return;
+  state.creatingStore = false;
+  state.replacingKhqr = false;
+  state.selectedStoreId = storeId;
+  sessionStorage.setItem("khqr_selected_store", storeId);
+  const store = selectedStore();
+  state.selectedSourceId = store && store.source ? store.source.id : "";
+  $("storeForm").dataset.renderedStore = "";
+  $("storeForm").dataset.renderedMode = "";
+  renderHome();
+  renderSetup();
+  renderAcceptanceSetup();
+}
+
+async function uploadKhqrImage(form) {
+  const source = primarySource();
+  if (!source) throw new Error("Create or select a store first.");
+  const input = $("khqrImageInput");
+  if (!input.files || !input.files[0]) throw new Error("Choose a KHQR image first.");
+
+  const data = new FormData();
+  data.append("file", input.files[0]);
+  const result = await api(
+    "/dashboard/api/sources/" + encodeURIComponent(source.id) + "/khqr-image",
+    { method: "POST", body: data }
+  );
+  state.replacingKhqr = false;
+  form.reset();
+  $("khqrSelectedFile").textContent = "KHQR image uploaded and verified.";
+  notice("KHQR verified. The exact uploaded image is now saved for this store.");
+  await refreshAll();
+  return result;
+}
+
+async function saveTelegramCredentials(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  await api("/dashboard/api/telegram/credentials", {
+    method: "POST",
+    body: JSON.stringify({
+      api_id: Number(data.api_id),
+      api_hash: String(data.api_hash || "").trim(),
+    }),
+  });
+  form.reset();
+  notice("Telegram API saved. Now connect your Telegram account.");
+  await refreshAll();
+}
+
+function telegramMessage(message, danger) {
+  $("telegramAuthMessage").textContent = message || "";
+  $("telegramAuthMessage").style.color = danger ? "var(--danger)" : "var(--muted)";
 }
 
 async function sendTelegramCode(form) {
   const data = Object.fromEntries(new FormData(form).entries());
-  telegramMessage("Requesting a Telegram login code…");
+  telegramMessage("Sending login code…");
   const result = await api("/dashboard/api/telegram/send-code", {
-    method: "POST", body: JSON.stringify({ phone: data.phone })
+    method: "POST",
+    body: JSON.stringify({ phone: String(data.phone || "").trim() }),
   });
   if (result.authorized) {
-    telegramMessage("Telegram account is already authorized.");
+    state.telegramAuthStep = "phone";
+    telegramMessage("Telegram is already connected.");
     await refreshAll();
     return;
   }
-  $("telegramPhoneForm").classList.add("hidden");
-  $("telegramCodeForm").classList.remove("hidden");
-  telegramMessage("Code sent to " + (result.masked_phone || "your Telegram account") + ".");
+  state.telegramAuthStep = "code";
+  renderTelegramSetup();
+  telegramMessage("Code sent. Enter the confirmation code.");
 }
 
 async function confirmTelegramCode(form) {
   const data = Object.fromEntries(new FormData(form).entries());
   const result = await api("/dashboard/api/telegram/confirm-code", {
-    method: "POST", body: JSON.stringify({ code: data.code })
+    method: "POST",
+    body: JSON.stringify({ code: String(data.code || "").trim() }),
   });
   form.reset();
   if (result.requires_password || result.step === "password") {
-    $("telegramCodeForm").classList.add("hidden");
-    $("telegramPasswordForm").classList.remove("hidden");
-    telegramMessage("Code accepted. Enter the Telegram 2-step password.");
+    state.telegramAuthStep = "password";
+    renderTelegramSetup();
+    telegramMessage("Code accepted. Enter your Telegram 2-step password.");
     return;
   }
-  telegramMessage("Telegram session authorized.");
+  state.telegramAuthStep = "phone";
+  telegramMessage("Telegram connected. Now choose the payment group.");
   await refreshAll();
 }
 
 async function confirmTelegramPassword(form) {
   const data = Object.fromEntries(new FormData(form).entries());
   await api("/dashboard/api/telegram/confirm-password", {
-    method: "POST", body: JSON.stringify({ password: data.password })
+    method: "POST",
+    body: JSON.stringify({ password: data.password }),
   });
   form.reset();
-  telegramMessage("Telegram session authorized.");
+  state.telegramAuthStep = "phone";
+  telegramMessage("Telegram connected. Now choose the payment group.");
+  await refreshAll();
+}
+
+async function loadTelegramChats() {
+  telegramMessage("Loading your Telegram groups…");
+  state.telegramChats = await api("/dashboard/api/telegram/chats?limit=300");
+  renderTelegramGroupOptions();
+  telegramMessage(state.telegramChats.length + " groups/channels loaded.");
+}
+
+async function useTelegramGroup() {
+  const source = primarySource();
+  if (!source) throw new Error("Connect your KHQR payment account first.");
+  const groupId = Number($("telegramGroupSelect").value);
+  if (!Number.isInteger(groupId)) throw new Error("Choose a Telegram payment group.");
+
+  await api("/dashboard/api/sources/" + encodeURIComponent(source.id) + "/telegram-group", {
+    method: "POST",
+    body: JSON.stringify({ telegram_group_id: groupId }),
+  });
+
+  telegramMessage("Checking recent ABA payment notifications in this group…");
+  const result = await api(
+    "/dashboard/api/telegram/sources/" + encodeURIComponent(source.id) + "/discover-sender",
+    {
+      method: "POST",
+      body: JSON.stringify({ limit: 300, apply: true }),
+    }
+  );
+  if (!result.unanimous || !result.applied) {
+    throw new Error("Could not safely recognize one ABA notification sender in this group.");
+  }
+  telegramMessage("Payment group connected. ABA notifications were recognized automatically.");
+  notice("Telegram payment notifications are ready.");
+  await refreshAll();
+}
+
+async function discoverSender(sourceId) {
+  const result = await api(
+    "/dashboard/api/telegram/sources/" + encodeURIComponent(sourceId) + "/discover-sender",
+    { method: "POST", body: JSON.stringify({ limit: 300, apply: true }) }
+  );
+  if (!result.unanimous || !result.applied) {
+    throw new Error("Sender discovery was not unanimous.");
+  }
+  notice("Trusted ABA sender refreshed.");
+  await refreshAll();
+}
+
+async function toggleSource(sourceId, currentlyEnabled) {
+  let confirm = "";
+  if (!currentlyEnabled) {
+    if (!window.confirm("Advanced action: enable live payment source? Only do this after a successful real payment test.")) return;
+    confirm = window.prompt('Type "ENABLE SOURCE" to continue') || "";
+    if (confirm !== "ENABLE SOURCE") return;
+  }
+  await api("/dashboard/api/sources/" + encodeURIComponent(sourceId) + "/enabled", {
+    method: "POST",
+    body: JSON.stringify({ enabled: !currentlyEnabled, confirm }),
+  });
+  notice(currentlyEnabled ? "Live source disabled." : "Live source enabled.");
   await refreshAll();
 }
 
@@ -514,19 +1005,17 @@ function startAcceptanceLoops() {
 
 async function startAcceptanceTest() {
   const source = selectedAcceptanceSource();
-  if (!source) throw new Error("No payment source is selected.");
+  if (!source) throw new Error("Finish Setup first.");
   const amount = Number($("acceptanceAmount").value);
   if (!Number.isFinite(amount) || amount < 0.01 || amount > 5) {
     throw new Error("Choose a test amount from $0.01 to $5.00.");
   }
-  const amountMinor = Math.round(amount * 100);
-  const confirm = $("acceptanceConfirm").value.trim();
   const result = await api("/dashboard/api/acceptance-tests/start", {
     method: "POST",
     body: JSON.stringify({
       source_id: source.source_id,
-      amount_minor: amountMinor,
-      confirm: confirm,
+      amount_minor: Math.round(amount * 100),
+      confirm: $("acceptanceConfirm").value.trim(),
     }),
   });
   state.acceptance = result;
@@ -534,44 +1023,44 @@ async function startAcceptanceTest() {
   $("acceptanceConfirm").value = "";
   renderAcceptanceLive();
   startAcceptanceLoops();
-  notice("Real payment test started. Scan the QR and send the exact amount + Remark.");
+  notice("Test created. Scan the QR and send the exact amount + payment note.");
 }
 
 async function scanAcceptance(silent) {
   if (!state.acceptance || acceptanceTerminal(state.acceptance.result)) return;
   const button = $("acceptanceCheckNow");
-  if (button) button.disabled = true;
+  button.disabled = true;
   try {
     state.acceptance = await api(
-      "/dashboard/api/acceptance-tests/"
-      + encodeURIComponent(state.acceptance.intent_id)
-      + "/scan",
+      "/dashboard/api/acceptance-tests/" +
+      encodeURIComponent(state.acceptance.intent_id) + "/scan",
       { method: "POST", body: JSON.stringify({ limit: 160 }) }
     );
     renderAcceptanceLive();
     if (acceptanceTerminal(state.acceptance.result)) {
       stopAcceptanceLoops();
       await refreshAll();
-      if (!silent) notice("Acceptance test finished: " + state.acceptance.result + ".");
+      if (!silent) notice("Payment test finished.");
     }
   } catch (error) {
     if (!silent) notice(error.message || String(error), true);
   } finally {
-    if (button && state.acceptance && !acceptanceTerminal(state.acceptance.result)) button.disabled = false;
+    if (state.acceptance && !acceptanceTerminal(state.acceptance.result)) {
+      button.disabled = false;
+    }
   }
 }
 
 async function cancelAcceptance() {
   if (!state.acceptance || acceptanceTerminal(state.acceptance.result)) return;
   state.acceptance = await api(
-    "/dashboard/api/acceptance-tests/"
-    + encodeURIComponent(state.acceptance.intent_id)
-    + "/cancel",
+    "/dashboard/api/acceptance-tests/" +
+    encodeURIComponent(state.acceptance.intent_id) + "/cancel",
     { method: "POST", body: "{}" }
   );
   stopAcceptanceLoops();
   renderAcceptanceLive();
-  notice("Acceptance test cancelled.");
+  notice("Test cancelled.");
 }
 
 async function restoreAcceptanceFromSession() {
@@ -592,98 +1081,176 @@ async function restoreAcceptanceFromSession() {
 async function restoreSession() {
   try {
     const session = await api("/dashboard/api/session");
-    state.csrf = session.csrf_token; showApp(); await refreshAll(); await restoreAcceptanceFromSession();
-  } catch { showLogin(); }
+    state.csrf = session.csrf_token;
+    showApp();
+    await refreshAll();
+    await restoreAcceptanceFromSession();
+  } catch {
+    showLogin();
+  }
 }
+
 $("loginForm").addEventListener("submit", async event => {
-  event.preventDefault(); $("loginError").classList.add("hidden");
+  event.preventDefault();
+  $("loginError").classList.add("hidden");
   try {
     const result = await api("/dashboard/api/login", {
-      method: "POST", body: JSON.stringify({ secret: $("loginSecret").value })
+      method: "POST",
+      body: JSON.stringify({ secret: $("loginSecret").value }),
     });
-    state.csrf = result.csrf_token; $("loginSecret").value = ""; showApp(); await refreshAll(); await restoreAcceptanceFromSession();
+    state.csrf = result.csrf_token;
+    $("loginSecret").value = "";
+    showApp();
+    await refreshAll();
+    await restoreAcceptanceFromSession();
   } catch (error) {
-    $("loginError").textContent = error.message || "Login failed"; $("loginError").classList.remove("hidden");
+    $("loginError").textContent = error.message || "Login failed";
+    $("loginError").classList.remove("hidden");
   }
 });
+
 $("logoutButton").addEventListener("click", async () => {
-  try { await api("/dashboard/api/logout", { method: "POST", body: "{}" }); } finally { showLogin(); }
-});
-$("refreshButton").addEventListener("click", refreshAll);
-$("nav").addEventListener("click", event => {
-  const button = event.target.closest("[data-page]"); if (button) setPage(button.dataset.page);
-});
-$("acceptanceSource").addEventListener("change", renderAcceptanceSetup);
-$("acceptanceStartForm").addEventListener("submit", async event => {
-  event.preventDefault();
-  try { await startAcceptanceTest(); }
-  catch (error) { notice(error.message || String(error), true); }
-});
-$("acceptanceCheckNow").addEventListener("click", async () => {
-  await scanAcceptance(false);
-});
-$("acceptanceCancel").addEventListener("click", async () => {
-  try { await cancelAcceptance(); }
-  catch (error) { notice(error.message || String(error), true); }
-});
-$("copyAcceptanceRemark").addEventListener("click", async () => {
-  if (!state.acceptance || !state.acceptance.remark) return;
-  await navigator.clipboard.writeText(state.acceptance.remark);
-  $("copyAcceptanceRemark").textContent = "Copied";
-  window.setTimeout(() => $("copyAcceptanceRemark").textContent = "Copy remark", 1200);
+  try { await api("/dashboard/api/logout", { method: "POST", body: "{}" }); }
+  finally { showLogin(); }
 });
 
-$("businessForm").addEventListener("submit", async event => {
-  event.preventDefault(); try { await createBusiness(event.currentTarget); } catch (error) { notice(error.message, true); }
+$("refreshButton").addEventListener("click", refreshAll);
+
+$("globalStoreSelect").addEventListener("change", event => {
+  selectStore(event.target.value);
+  renderGlobalStoreSelector();
 });
-$("sourceForm").addEventListener("submit", async event => {
-  event.preventDefault(); try { await createSource(event.currentTarget); } catch (error) { notice(error.message, true); }
+
+$("nav").addEventListener("click", event => {
+  const button = event.target.closest("[data-page]");
+  if (button) setPage(button.dataset.page);
 });
-$("businessForm").elements.name.addEventListener("input", event => {
-  const slug = event.target.value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  const field = $("businessForm").elements.slug; if (!field.dataset.touched) field.value = slug;
+
+document.addEventListener("click", event => {
+  const goto = event.target.closest("[data-goto]");
+  if (goto) setPage(goto.dataset.goto);
 });
-$("businessForm").elements.slug.addEventListener("input", event => { event.target.dataset.touched = "1"; });
-$("sourceList").addEventListener("click", async event => {
-  const sender = event.target.closest("[data-sender]");
-  const discover = event.target.closest("[data-discover]");
-  const toggle = event.target.closest("[data-toggle]");
-  try {
-    if (discover) await discoverSender(discover.dataset.discover);
-    if (sender) await setSender(sender.dataset.sender);
-    if (toggle) await toggleSource(toggle.dataset.toggle, toggle.dataset.enabled === "true");
-  } catch (error) { notice(error.message, true); telegramMessage(error.message, true); }
+
+$("homeNextButton").addEventListener("click", event => {
+  setPage(event.currentTarget.dataset.goto || "setup");
 });
+
+$("goToTestButton").addEventListener("click", () => setPage("test"));
+
+$("storeForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  try { await saveStore(event.currentTarget); }
+  catch (error) { notice(error.message, true); }
+});
+
+$("setupStoreSelect").addEventListener("change", event => {
+  selectStore(event.target.value);
+});
+
+$("newStoreButton").addEventListener("click", beginNewStore);
+$("cancelStoreEdit").addEventListener("click", cancelNewStore);
+
+$("khqrImageInput").addEventListener("change", event => {
+  const file = event.target.files && event.target.files[0];
+  $("khqrSelectedFile").textContent = file
+    ? file.name + " · " + Math.max(1, Math.round(file.size / 1024)) + " KB"
+    : "Upload the static QR image customers normally scan.";
+});
+
+$("khqrUploadForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  try { await uploadKhqrImage(event.currentTarget); }
+  catch (error) { notice(error.message, true); }
+});
+
+$("replaceKhqrButton").addEventListener("click", () => {
+  state.replacingKhqr = true;
+  renderPaymentSetup();
+  window.setTimeout(() => $("khqrImageInput").click(), 0);
+});
+
+$("telegramCredentialsForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  try { await saveTelegramCredentials(event.currentTarget); }
+  catch (error) { telegramMessage(error.message, true); }
+});
+
 $("telegramPhoneForm").addEventListener("submit", async event => {
   event.preventDefault();
   try { await sendTelegramCode(event.currentTarget); }
   catch (error) { telegramMessage(error.message, true); }
 });
+
 $("telegramCodeForm").addEventListener("submit", async event => {
   event.preventDefault();
   try { await confirmTelegramCode(event.currentTarget); }
   catch (error) { telegramMessage(error.message, true); }
 });
+
 $("telegramPasswordForm").addEventListener("submit", async event => {
   event.preventDefault();
   try { await confirmTelegramPassword(event.currentTarget); }
   catch (error) { telegramMessage(error.message, true); }
 });
+
 $("loadTelegramChats").addEventListener("click", async () => {
   try { await loadTelegramChats(); }
   catch (error) { telegramMessage(error.message, true); }
 });
+
+$("useTelegramGroup").addEventListener("click", async () => {
+  try { await useTelegramGroup(); }
+  catch (error) { telegramMessage(error.message, true); }
+});
+
 $("cancelTelegramAuth").addEventListener("click", async () => {
   try { await api("/dashboard/api/telegram/cancel", { method: "POST", body: "{}" }); } catch {}
-  $("telegramCodeForm").classList.add("hidden");
-  $("telegramPasswordForm").classList.add("hidden");
-  $("telegramPhoneForm").classList.remove("hidden");
-  telegramMessage("Login flow reset.");
+  state.telegramAuthStep = "phone";
+  renderTelegramSetup();
+  telegramMessage("Telegram login reset.");
+});
+
+$("sourceList").addEventListener("click", async event => {
+  const discover = event.target.closest("[data-discover]");
+  const toggle = event.target.closest("[data-toggle]");
+  try {
+    if (discover) await discoverSender(discover.dataset.discover);
+    if (toggle) await toggleSource(toggle.dataset.toggle, toggle.dataset.enabled === "true");
+  } catch (error) {
+    notice(error.message, true);
+  }
+});
+
+$("acceptanceSource").addEventListener("change", renderAcceptanceSetup);
+
+$("acceptanceStartForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  try { await startAcceptanceTest(); }
+  catch (error) { notice(error.message || String(error), true); }
+});
+
+$("acceptanceCheckNow").addEventListener("click", async () => {
+  await scanAcceptance(false);
+});
+
+$("acceptanceCancel").addEventListener("click", async () => {
+  try { await cancelAcceptance(); }
+  catch (error) { notice(error.message || String(error), true); }
+});
+
+$("copyAcceptanceRemark").addEventListener("click", async () => {
+  if (!state.acceptance || !state.acceptance.remark) return;
+  await navigator.clipboard.writeText(state.acceptance.remark);
+  $("copyAcceptanceRemark").textContent = "Copied";
+  window.setTimeout(() => $("copyAcceptanceRemark").textContent = "Copy note", 1200);
 });
 
 $("secretContent").addEventListener("click", async event => {
-  const button = event.target.closest("[data-copy]"); if (!button) return;
-  await navigator.clipboard.writeText(button.dataset.copy); button.textContent = "Copied";
+  const button = event.target.closest("[data-copy]");
+  if (!button) return;
+  await navigator.clipboard.writeText(button.dataset.copy);
+  button.textContent = "Copied";
   window.setTimeout(() => button.textContent = "Copy", 1200);
 });
+
 restoreSession();

@@ -82,6 +82,45 @@ def create_source(db: Session, business_id: str, **values):
     return source
 
 
+def configure_source_payment(
+    db: Session,
+    source_id: str,
+    *,
+    merchant_alias: str,
+    static_khqr: str,
+    currency: str,
+) -> models.PaymentSource:
+    source = db.get(models.PaymentSource, source_id)
+    if not source:
+        raise NotFound("payment source not found")
+    if source.enabled:
+        raise Conflict("disable payment source before changing payment identity")
+    source.merchant_alias = merchant_alias.strip()
+    source.static_khqr = static_khqr.strip()
+    source.currency = currency.strip().upper()
+    db.commit()
+    db.refresh(source)
+    return source
+
+
+def configure_source_group(
+    db: Session,
+    source_id: str,
+    telegram_group_id: int,
+) -> models.PaymentSource:
+    source = db.get(models.PaymentSource, source_id)
+    if not source:
+        raise NotFound("payment source not found")
+    if source.enabled:
+        raise Conflict("disable payment source before changing Telegram group")
+    if source.telegram_group_id != telegram_group_id:
+        source.telegram_sender_id = None
+    source.telegram_group_id = telegram_group_id
+    db.commit()
+    db.refresh(source)
+    return source
+
+
 def configure_source_sender(
     db: Session,
     source_id: str,

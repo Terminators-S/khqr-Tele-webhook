@@ -19,13 +19,13 @@ Production is four separable processes sharing PostgreSQL: API, settlement worke
 ## Quick start
 1. Run `./scripts/install.sh` on Linux/macOS or `./scripts/install.ps1` on Windows.
 2. Open `http://127.0.0.1:8088/dashboard` and sign in with the generated `INTERNAL_SECRET`.
-3. Create a Business; save its one-time API key/webhook secret.
-4. Create a disabled PaymentSource with merchant alias + static KHQR.
-5. Configure Telegram API credentials, authorize the dedicated Telegram account, load the merchant group, and discover the trusted ABA sender.
-6. Open **Real Test**, choose a small USD amount, and type `SEND REAL TEST MONEY`.
-7. Scan the merchant KHQR, enter the exact generated amount and Remark, and watch the dashboard verify the real ABA/Telegram notification.
+3. In **Setup → Store**, create or select a store. Each store owns an isolated payment source and may use its own currency, webhook, KHQR image and Telegram payment group.
+4. In **Setup → Upload your KHQR**, upload the exact reusable static KHQR image issued by the merchant's bank/Bakong. The service decodes and validates the QR payload and CRC, stores the original image bytes unchanged, and serves that same uploaded image to customers/tests. It does not generate a replacement merchant QR.
+5. In **Setup → Telegram**, save Telegram API ID/hash, authorize the dedicated Telegram account, load the merchant payment-notification group, then select it. The dashboard discovers and binds the trusted ABA notification sender automatically for the selected store.
+6. Open **Test payment**, choose a small USD amount, and type `SEND REAL TEST MONEY`.
+7. Scan the uploaded merchant KHQR, enter the exact generated amount and Remark, and watch the dashboard verify the real ABA/Telegram notification.
 8. Real Test evidence stays SHADOW-only: no allocation, webhook, credit, or product fulfillment is allowed.
-9. Dashboard activation remains blocked until at least one Real Test is verified.
+9. Dashboard activation remains blocked until the selected store has an uploaded verified KHQR image and at least one Real Test is verified.
 10. Migration/cutover operators should still run SHADOW parity + `make cutover-preflight` before any separate production cutover.
 
 ## Real payment acceptance

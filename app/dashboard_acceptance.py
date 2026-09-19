@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import io
 import json
 import secrets
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +26,8 @@ from .dashboard_telegram import (
     _session_parts,
 )
 from .db import get_db
+from .khqr_asset import image_exists, image_metadata, image_path
+from .khqr_payload import KhqrPayloadError, validate_static_khqr
 from .parser import parse_aba_text
 
 
@@ -228,21 +229,33 @@ def acceptance_prerequisites(
     db: Session = Depends(get_db),
 ):
     rows = list(db.scalars(select(models.PaymentSource).order_by(models.PaymentSource.created_at)))
-    return [
+    payload = []
+    for source in rows:
+        khqr_valid = False
+        uploaded_image = image_exists(source.id)
+        if uploaded_image and (source.static_khqr or "").strip():
+            try:
+                validate_static_khqr(source.static_khqr or "")
+                khqr_valid = True
+            except KhqrPayloadError:
+                pass
+        payload.append(
         {
             "source_id": source.id,
             "name": source.name,
             "business_id": source.business_id,
-            "configured": core.source_configured(source),
+            "configured": bool(core.source_configured(source) and khqr_valid),
             "disabled": not source.enabled,
             "telegram_group": source.telegram_group_id is not None,
             "trusted_sender": source.telegram_sender_id is not None,
             "merchant_alias": bool((source.merchant_alias or "").strip()),
             "static_khqr": bool((source.static_khqr or "").strip()),
+            "khqr_image_configured": uploaded_image,
+            "khqr_valid": khqr_valid,
             "currency": source.currency,
         }
-        for source in rows
-    ]
+        )
+    return payload
 
 
 @router.post("/start")
@@ -263,8 +276,20 @@ def acceptance_start(
     if not core.source_configured(source):
         raise HTTPException(
             status_code=409,
-            detail="complete Telegram group/sender, merchant alias, and static KHQR first",
+            detail="complete payment account and Telegram setup first",
         )
+    if not image_exists(source.id):
+        raise HTTPException(
+            status_code=409,
+            detail="upload your store's static KHQR image first",
+        )
+    try:
+        validate_static_khqr(source.static_khqr or "")
+    except KhqrPayloadError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="payment QR is invalid; rebuild it in Setup",
+        ) from exc
     try:
         _settings, _credentials, session_path, _name, _workdir = _session_parts()
     except HTTPException:
@@ -398,19 +423,11 @@ def acceptance_qr(
     db: Session = Depends(get_db),
 ):
     _intent, _request, source = _require_test_intent(db, intent_id)
-    if not source.static_khqr:
-        raise HTTPException(status_code=409, detail="static KHQR is not configured")
-
-    try:
-        import qrcode
-    except ImportError as exc:
-        raise HTTPException(status_code=503, detail="QR renderer is unavailable") from exc
-
-    image = qrcode.make(source.static_khqr)
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return Response(
-        content=buffer.getvalue(),
-        media_type="image/png",
+    if not image_exists(source.id):
+        raise HTTPException(status_code=409, detail="KHQR image has not been uploaded")
+    meta = image_metadata(source.id)
+    return FileResponse(
+        image_path(source.id),
+        media_type=meta.get("media_type") or "application/octet-stream",
         headers={"Cache-Control": "no-store"},
     )

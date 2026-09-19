@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from tests.khqr_test_utils import valid_khqr_payload
 from app.main import app
 import app.dashboard_telegram as dashboard_telegram
 
@@ -85,7 +86,7 @@ def test_dashboard_discovers_unanimous_sender_without_enabling(
             "currency": "USD",
             "telegram_group_id": -100919191,
             "merchant_alias": "TELEGRAM UI",
-            "static_khqr": "STATIC",
+            "static_khqr": valid_khqr_payload(account_id="telegram-ui@aba", merchant_name="TELEGRAM UI"),
         },
     ).json()
     assert source["enabled"] is False
