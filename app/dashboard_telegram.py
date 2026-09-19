@@ -131,14 +131,30 @@ def _mask_phone(phone: str) -> str:
     return digits[:3] + ("•" * max(2, len(digits) - 6)) + digits[-3:]
 
 
-def _clean_flows() -> None:
+async def _close_auth_flow(nonce: str) -> None:
+    flow = _auth_flows.pop(nonce, None)
+    if not flow:
+        return
+    client = flow.get("client")
+    path = flow.get("path")
+    if client is not None and path is not None:
+        await _disconnect(client, path)
+
+
+async def _clean_flows() -> None:
     cutoff = time.time() - AUTH_TTL_SECONDS
     expired = [
         key for key, value in _auth_flows.items()
         if float(value.get("created_at") or 0) < cutoff
     ]
     for key in expired:
-        _auth_flows.pop(key, None)
+        await _close_auth_flow(key)
+
+
+async def _close_other_auth_flows(current_nonce: str) -> None:
+    for nonce in list(_auth_flows):
+        if nonce != current_nonce:
+            await _close_auth_flow(nonce)
 
 
 async def _connect_authorized():
@@ -231,7 +247,9 @@ async def telegram_send_code(
     payload: PhoneRequest,
     session: DashboardSession = Depends(require_dashboard_csrf),
 ):
-    _clean_flows()
+    await _clean_flows()
+    await _close_other_auth_flows(session.nonce)
+    await _close_auth_flow(session.nonce)
     _settings, _credentials, existing_path, _name, _workdir = _session_parts()
     account_id = _local_session_account_id(existing_path)
     if account_id is not None:
@@ -250,6 +268,8 @@ async def telegram_send_code(
             "phone_code_hash": sent.phone_code_hash,
             "created_at": time.time(),
             "step": "code",
+            "client": client,
+            "path": path,
         }
         return {
             "authorized": False,
@@ -257,12 +277,11 @@ async def telegram_send_code(
             "masked_phone": _mask_phone(payload.phone),
         }
     except Exception as exc:
+        await _disconnect(client, path)
         raise HTTPException(
             status_code=400,
             detail=f"Telegram code request failed ({type(exc).__name__})",
         ) from exc
-    finally:
-        await _disconnect(client, path)
 
 
 @router.post("/confirm-code")
@@ -270,52 +289,65 @@ async def telegram_confirm_code(
     payload: CodeRequest,
     session: DashboardSession = Depends(require_dashboard_csrf),
 ):
-    _clean_flows()
+    await _clean_flows()
     flow = _auth_flows.get(session.nonce)
     if not flow or flow.get("step") != "code":
         raise HTTPException(status_code=409, detail="Telegram code flow expired; resend code")
 
-    client, path = _client()
-    try:
-        await client.connect()
-        from pyrogram.errors import (
-            PhoneCodeExpired,
-            PhoneCodeInvalid,
-            SessionPasswordNeeded,
+    client = flow.get("client")
+    path = flow.get("path")
+    if client is None or path is None or not getattr(client, "is_connected", False):
+        await _close_auth_flow(session.nonce)
+        raise HTTPException(
+            status_code=409,
+            detail="Telegram login connection was lost; resend a new code",
         )
-        try:
-            user = await client.sign_in(
-                flow["phone"],
-                flow["phone_code_hash"],
-                payload.code,
-            )
-        except SessionPasswordNeeded:
-            flow["step"] = "password"
-            flow["created_at"] = time.time()
-            return {
-                "authorized": False,
-                "step": "password",
-                "requires_password": True,
-            }
-        except (PhoneCodeInvalid, PhoneCodeExpired) as exc:
-            raise HTTPException(
-                status_code=400,
-                detail="Telegram confirmation code is invalid or expired",
-            ) from exc
 
-        if not user:
-            raise HTTPException(
-                status_code=409,
-                detail="Telegram account registration is not supported by dashboard setup",
-            )
-        _auth_flows.pop(session.nonce, None)
+    from pyrogram.errors import (
+        PhoneCodeExpired,
+        PhoneCodeInvalid,
+        SessionPasswordNeeded,
+    )
+    try:
+        user = await client.sign_in(
+            flow["phone"],
+            flow["phone_code_hash"],
+            payload.code,
+        )
+    except SessionPasswordNeeded:
+        flow["step"] = "password"
+        flow["created_at"] = time.time()
         return {
-            "authorized": True,
-            "step": "complete",
-            "account_id": int(user.id),
+            "authorized": False,
+            "step": "password",
+            "requires_password": True,
         }
-    finally:
-        await _disconnect(client, path)
+    except PhoneCodeInvalid as exc:
+        flow["created_at"] = time.time()
+        raise HTTPException(
+            status_code=400,
+            detail="Telegram confirmation code is invalid",
+        ) from exc
+    except PhoneCodeExpired as exc:
+        await _close_auth_flow(session.nonce)
+        raise HTTPException(
+            status_code=400,
+            detail="Telegram confirmation code expired; request a new code",
+        ) from exc
+
+    if not user:
+        await _close_auth_flow(session.nonce)
+        raise HTTPException(
+            status_code=409,
+            detail="Telegram account registration is not supported by dashboard setup",
+        )
+    account_id = int(user.id)
+    await _close_auth_flow(session.nonce)
+    return {
+        "authorized": True,
+        "step": "complete",
+        "account_id": account_id,
+    }
 
 
 @router.post("/confirm-password")
@@ -323,42 +355,48 @@ async def telegram_confirm_password(
     payload: PasswordRequest,
     session: DashboardSession = Depends(require_dashboard_csrf),
 ):
-    _clean_flows()
+    await _clean_flows()
     flow = _auth_flows.get(session.nonce)
     if not flow or flow.get("step") != "password":
         raise HTTPException(status_code=409, detail="Telegram password step is not active")
 
-    client, path = _client()
+    client = flow.get("client")
+    path = flow.get("path")
+    if client is None or path is None or not getattr(client, "is_connected", False):
+        await _close_auth_flow(session.nonce)
+        raise HTTPException(
+            status_code=409,
+            detail="Telegram login connection was lost; resend a new code",
+        )
+
+    from pyrogram.errors import PasswordHashInvalid
     try:
-        await client.connect()
-        from pyrogram.errors import PasswordHashInvalid
-        try:
-            user = await client.check_password(payload.password)
-        except PasswordHashInvalid as exc:
-            raise HTTPException(
-                status_code=400,
-                detail="Telegram 2-step verification password is invalid",
-            ) from exc
-        _auth_flows.pop(session.nonce, None)
-        return {
-            "authorized": True,
-            "step": "complete",
-            "account_id": int(user.id),
-        }
-    finally:
-        await _disconnect(client, path)
+        user = await client.check_password(payload.password)
+    except PasswordHashInvalid as exc:
+        flow["created_at"] = time.time()
+        raise HTTPException(
+            status_code=400,
+            detail="Telegram 2-step verification password is invalid",
+        ) from exc
+    account_id = int(user.id)
+    await _close_auth_flow(session.nonce)
+    return {
+        "authorized": True,
+        "step": "complete",
+        "account_id": account_id,
+    }
 
 
 @router.post("/cancel")
-def telegram_cancel(
+async def telegram_cancel(
     session: DashboardSession = Depends(require_dashboard_csrf),
 ):
-    _auth_flows.pop(session.nonce, None)
+    await _close_auth_flow(session.nonce)
     return {"cancelled": True}
 
 
 @router.post("/reset-account")
-def telegram_reset_account(
+async def telegram_reset_account(
     payload: TelegramAccountResetRequest,
     session: DashboardSession = Depends(require_dashboard_csrf),
     db: Session = Depends(get_db),
@@ -378,6 +416,8 @@ def telegram_reset_account(
             detail="disable every live payment source before changing the Telegram account",
         )
 
+    await _close_other_auth_flows(session.nonce)
+    await _close_auth_flow(session.nonce)
     settings = get_settings()
     path, _name, _workdir = session_location(settings.telegram_session_name)
     removed = False
@@ -397,22 +437,23 @@ def telegram_reset_account(
                 detail="could not remove the dedicated Telegram session file",
             ) from exc
 
-    _auth_flows.pop(session.nonce, None)
     sources = list(db.scalars(select(models.PaymentSource)))
-    cleared = 0
+    sender_cleared = 0
+    group_cleared = 0
     for source in sources:
         if source.telegram_sender_id is not None:
             source.telegram_sender_id = None
-            cleared += 1
+            sender_cleared += 1
+        if source.telegram_group_id is not None:
+            source.telegram_group_id = None
+            group_cleared += 1
     db.commit()
 
     return {
         "authorized": False,
         "session_removed": removed,
-        "sender_bindings_cleared": cleared,
-        "group_mappings_preserved": len(
-            [source for source in sources if source.telegram_group_id is not None]
-        ),
+        "sender_bindings_cleared": sender_cleared,
+        "group_mappings_cleared": group_cleared,
         "step": "phone",
     }
 

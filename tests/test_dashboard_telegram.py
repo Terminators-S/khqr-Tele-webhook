@@ -167,13 +167,13 @@ def test_reset_telegram_account_removes_session_and_clears_sender(db, monkeypatc
     assert body["authorized"] is False
     assert body["session_removed"] is True
     assert body["sender_bindings_cleared"] == 1
-    assert body["group_mappings_preserved"] == 1
+    assert body["group_mappings_cleared"] == 1
     assert not session_path.exists()
     assert not wal_path.exists()
 
     db.expire_all()
     refreshed = db.get(type(source), source.id)
-    assert refreshed.telegram_group_id == -100700700
+    assert refreshed.telegram_group_id is None
     assert refreshed.telegram_sender_id is None
     assert refreshed.enabled is False
 
@@ -211,3 +211,71 @@ def test_reset_telegram_account_blocked_while_any_source_enabled(db, monkeypatch
     assert response.status_code == 409
     assert "disable every live payment source" in response.json()["detail"]
     assert session_path.exists()
+
+
+def test_login_code_confirmation_reuses_same_connected_client(monkeypatch, tmp_path):
+    csrf = login()
+    session_path = tmp_path / "khqr_collector.session"
+
+    class LoginClient:
+        def __init__(self):
+            self.is_connected = False
+            self.connect_calls = 0
+            self.disconnect_calls = 0
+            self.send_code_calls = 0
+            self.sign_in_calls = 0
+
+        async def connect(self):
+            self.connect_calls += 1
+            self.is_connected = True
+            return False
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+        async def send_code(self, phone):
+            self.send_code_calls += 1
+            assert self.is_connected is True
+            return SimpleNamespace(phone_code_hash="fresh-code-hash")
+
+        async def sign_in(self, phone, phone_code_hash, code):
+            self.sign_in_calls += 1
+            assert self.is_connected is True
+            assert phone_code_hash == "fresh-code-hash"
+            assert code == "12345"
+            return SimpleNamespace(id=42424242)
+
+    fake = LoginClient()
+    monkeypatch.setattr(
+        dashboard_telegram,
+        "_session_parts",
+        lambda: (SimpleNamespace(), SimpleNamespace(), session_path, "khqr_collector", tmp_path),
+    )
+    monkeypatch.setattr(dashboard_telegram, "_client", lambda: (fake, session_path))
+    monkeypatch.setattr(dashboard_telegram, "_local_session_account_id", lambda _path: None)
+
+    sent = client.post(
+        "/dashboard/api/telegram/send-code",
+        headers={"X-CSRF-Token": csrf},
+        json={"phone": "+85512345678"},
+    )
+    assert sent.status_code == 200
+    assert sent.json()["step"] == "code"
+    assert fake.is_connected is True
+    assert fake.connect_calls == 1
+    assert fake.disconnect_calls == 0
+
+    confirmed = client.post(
+        "/dashboard/api/telegram/confirm-code",
+        headers={"X-CSRF-Token": csrf},
+        json={"code": "12345"},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["authorized"] is True
+    assert confirmed.json()["account_id"] == 42424242
+    assert fake.connect_calls == 1
+    assert fake.send_code_calls == 1
+    assert fake.sign_in_calls == 1
+    assert fake.disconnect_calls == 1
+    assert fake.is_connected is False

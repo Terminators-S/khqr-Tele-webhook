@@ -1148,7 +1148,8 @@ async function changeTelegramAccount() {
   await refreshAll();
   notice(
     "Telegram account disconnected. " +
-    result.sender_bindings_cleared + " trusted sender binding(s) cleared safely."
+    result.sender_bindings_cleared + " trusted sender binding(s) and " +
+    result.group_mappings_cleared + " payment group mapping(s) cleared safely."
   );
 }
 
