@@ -72,6 +72,26 @@ incomplete. Sender changes are rejected while a source is enabled; disable it
 first before correcting the sender. This gives rollback a single explicit
 `enabled=false` operation.
 
+### Read-only sender discovery
+
+Create the dedicated standalone Telegram session with
+`scripts/create_telegram_shadow_session.py`. The session file must live directly
+under `runtime/`, be mode `0600`, and must not reuse Creative Studio's active
+session file.
+
+For a staged source, discover the notification sender without writing payment
+evidence:
+
+```bash
+make sender-discovery SOURCE_ID="<staged-source-id>"
+```
+
+The probe reads recent group history, parses ABA payment notifications, and
+requires one unanimous sender identity. It writes only an owner-only JSON
+observation artifact under `runtime/`; it does not ingest evidence, create
+intents, alter source configuration, or activate payments. Configure the sender
+through the guarded internal endpoint only after reviewing the discovery output.
+
 ## Client intent contract
 
 Use `khqr_sdk.KhqrClient.create_payment_intent()` with a stable external order

@@ -1,4 +1,4 @@
-.PHONY: test rc-gate deploy-core stop-core integration-smoke shadow-preflight
+.PHONY: test rc-gate deploy-core stop-core integration-smoke sender-discovery shadow-preflight
 
 test:
 	.venv/bin/pytest -q
@@ -14,6 +14,10 @@ stop-core:
 
 integration-smoke:
 	.venv/bin/python scripts/integration_smoke.py --timeout 25
+
+sender-discovery:
+	@test -n "$(SOURCE_ID)" || (echo "SOURCE_ID is required" >&2; exit 2)
+	.venv/bin/python scripts/telegram_sender_discovery.py --source-id "$(SOURCE_ID)"
 
 shadow-preflight:
 	.venv/bin/python scripts/telegram_shadow_preflight.py

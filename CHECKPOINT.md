@@ -44,6 +44,12 @@
 - Core redeployed healthy on loopback after destructive gate cleanup.
 - First consuming project staged: Creative Studio Business + ABA source exists in standalone with real source identity, source disabled, sender unset, 0 intents, 0 evidence. CreativeStudioWeb remains authoritative.
 - Staged Creative Studio credentials are stored only under git-ignored runtime/ with mode 0600.
+- Read-only Telegram sender-discovery probe added for staged disabled sources; it cannot ingest evidence, mutate source state, enable payments, or promote SHADOW evidence.
+- Sender-discovery focused tests: 5/5 PASS on isolated PostgreSQL.
+- Full isolated PostgreSQL suite after sender-discovery slice: 41/41 PASS.
+- Missing-session fail-closed proof: discovery blocked with 0 intents and 0 evidence before/after.
+- Dedicated Telegram session path is locked to runtime/khqr_collector.session; session does not exist yet.
+- Telegram API credentials are configured; TELEGRAM_SHADOW_ONLY=true, ALLOW_LIVE_TELEGRAM=false, ALLOW_SHADOW_PROMOTION=false.
 
 ## Next task
-Create a dedicated standalone Telegram session under runtime/ and run SHADOW-only observation against the staged Creative Studio source. Determine the real trusted ABA notification sender from the dedicated session, compare parsed Trx ID/amount/time/source against Creative Studio history, then configure the sender through the guarded internal endpoint. Keep the source disabled until shadow parity is reviewed. Do not reuse Creative Studio's active admin_session.session and do not enable ALLOW_SHADOW_PROMOTION or ALLOW_LIVE_TELEGRAM.
+Bootstrap the dedicated standalone Telegram session under runtime/ through the secure terminal login prompt. Then run the read-only sender-discovery probe against the staged Creative Studio source, review sender unanimity and historical Trx/amount/time parity, and configure the observed sender through the guarded internal endpoint. Keep the source disabled until shadow parity is reviewed. Do not reuse Creative Studio's active admin_session.session and do not enable ALLOW_SHADOW_PROMOTION or ALLOW_LIVE_TELEGRAM.
