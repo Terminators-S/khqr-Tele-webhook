@@ -100,5 +100,10 @@
 - Post-isolation RC gate PASS: 75/75 tests, Alembic drift clean, allocator 30 DUAL + 70 REMARK_PRIMARY, duplicate evidence exactly one allocation, 40/40 SKIP LOCKED, wheel/image import PASS; runtime DB remained 0/0/0/0 before and after the gate.
 - Current clean runtime state after recovery: 0 businesses, 0 sources, 0 evidence, 0 allocations; live Telegram collector not running; safe defaults remain `TELEGRAM_SHADOW_ONLY=true`, `ALLOW_LIVE_TELEGRAM=false`, `ALLOW_SHADOW_PROMOTION=false`.
 
+- Telegram account UX repaired: Setup now always exposes a dedicated Telegram Account block instead of hiding account configuration when a saved session exists. An authorized session shows its account ID and an explicit **Change Telegram account** control; an unauthorized session shows the phone-number login path.
+- Added guarded `POST /dashboard/api/telegram/reset-account`: requires `CHANGE TELEGRAM ACCOUNT`, blocks if any source is enabled, deletes only the standalone Telegram session/SQLite sidecars, preserves store/KHQR/group mappings, and clears every trusted Telegram sender binding so a replacement account must revalidate payment groups before becoming ready.
+- The old misleading “Reset Telegram login” control is now only a **Cancel login attempt** action for active code/2FA flows.
+- Telegram focused gate after account-switch repair: 5/5 PASS. Full isolated regression: 77/77 PASS. JS syntax, Python compileall and git diff checks PASS.
+
 ## Next task
 Hard-refresh the Exosme dashboard and run the full first-user path: select/create a store → upload the real static KHQR → configure Telegram API/account → load and bind that store's payment group → open Integration → save a real project webhook URL → save/rotate the one-time client credentials → copy the generated `/v1/payment-intents` request into a small consuming test project. Then run a small Real Payment Test and confirm the Telegram evidence reaches VERIFIED while the source remains disabled. Only after the consuming project verifies signed webhook handling should dashboard activation be used. Continue collecting SHADOW parity toward the separate 10-payment cutover gate.

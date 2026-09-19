@@ -385,6 +385,28 @@ function renderTelegramSetup() {
   $("telegramCodeForm").classList.toggle("hidden", state.telegramAuthStep !== "code");
   $("telegramPasswordForm").classList.toggle("hidden", state.telegramAuthStep !== "password");
   $("telegramGroupPanel").classList.toggle("hidden", !(tg.authorized && source));
+  $("cancelTelegramAuth").classList.toggle(
+    "hidden",
+    !["code", "password"].includes(state.telegramAuthStep)
+  );
+
+  if (tg.authorized) {
+    $("telegramAccountTitle").textContent = "Connected Telegram account";
+    $("telegramAccountDetail").textContent =
+      "Account ID " + (tg.account_id || "verified") +
+      " · This account is used to read payment notifications for every configured store.";
+    $("changeTelegramAccount").classList.remove("hidden");
+  } else if (tg.api_credentials) {
+    $("telegramAccountTitle").textContent = "Sign in to a Telegram account";
+    $("telegramAccountDetail").textContent =
+      "Enter the phone number of the Telegram account that is a member of your ABA payment-notification group.";
+    $("changeTelegramAccount").classList.add("hidden");
+  } else {
+    $("telegramAccountTitle").textContent = "Telegram account not configured";
+    $("telegramAccountDetail").textContent =
+      "First save the Telegram API ID and API hash below. Then the phone-number login will appear here.";
+    $("changeTelegramAccount").classList.add("hidden");
+  }
 
   const groupReady = Boolean(source && source.telegram_group_id !== null);
   const senderReady = Boolean(source && source.telegram_sender_id !== null);
@@ -1107,6 +1129,29 @@ async function confirmTelegramPassword(form) {
   await refreshAll();
 }
 
+async function changeTelegramAccount() {
+  if (!window.confirm(
+    "Change the Telegram account used by KHQR? This will disconnect the saved session and require sender verification again for every store."
+  )) return;
+  const confirm = window.prompt('Type "CHANGE TELEGRAM ACCOUNT" to continue') || "";
+  if (confirm !== "CHANGE TELEGRAM ACCOUNT") return;
+
+  const result = await api("/dashboard/api/telegram/reset-account", {
+    method: "POST",
+    body: JSON.stringify({ confirm }),
+  });
+  state.telegramChats = [];
+  state.telegramAuthStep = "phone";
+  telegramMessage(
+    "Old Telegram account disconnected. Sign in with the new phone number, then load and verify each payment group again."
+  );
+  await refreshAll();
+  notice(
+    "Telegram account disconnected. " +
+    result.sender_bindings_cleared + " trusted sender binding(s) cleared safely."
+  );
+}
+
 async function loadTelegramChats() {
   telegramMessage("Loading your Telegram groups…");
   state.telegramChats = await api("/dashboard/api/telegram/chats?limit=300");
@@ -1415,6 +1460,11 @@ $("telegramPasswordForm").addEventListener("submit", async event => {
   event.preventDefault();
   try { await confirmTelegramPassword(event.currentTarget); }
   catch (error) { telegramMessage(error.message, true); }
+});
+
+$("changeTelegramAccount").addEventListener("click", async () => {
+  try { await changeTelegramAccount(); }
+  catch (error) { telegramMessage(error.message || String(error), true); }
 });
 
 $("loadTelegramChats").addEventListener("click", async () => {

@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import core, models
@@ -49,6 +50,10 @@ class CodeRequest(BaseModel):
 
 class PasswordRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
+
+
+class TelegramAccountResetRequest(BaseModel):
+    confirm: str = ""
 
 
 class SenderDiscoveryRequest(BaseModel):
@@ -350,6 +355,66 @@ def telegram_cancel(
 ):
     _auth_flows.pop(session.nonce, None)
     return {"cancelled": True}
+
+
+@router.post("/reset-account")
+def telegram_reset_account(
+    payload: TelegramAccountResetRequest,
+    session: DashboardSession = Depends(require_dashboard_csrf),
+    db: Session = Depends(get_db),
+):
+    if payload.confirm != "CHANGE TELEGRAM ACCOUNT":
+        raise HTTPException(
+            status_code=400,
+            detail='type "CHANGE TELEGRAM ACCOUNT" to disconnect the saved account',
+        )
+
+    enabled_source = db.scalar(
+        select(models.PaymentSource).where(models.PaymentSource.enabled.is_(True)).limit(1)
+    )
+    if enabled_source:
+        raise HTTPException(
+            status_code=409,
+            detail="disable every live payment source before changing the Telegram account",
+        )
+
+    settings = get_settings()
+    path, _name, _workdir = session_location(settings.telegram_session_name)
+    removed = False
+    for candidate in [
+        path,
+        Path(str(path) + "-journal"),
+        Path(str(path) + "-wal"),
+        Path(str(path) + "-shm"),
+    ]:
+        try:
+            if candidate.exists():
+                candidate.unlink()
+                removed = True
+        except OSError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="could not remove the dedicated Telegram session file",
+            ) from exc
+
+    _auth_flows.pop(session.nonce, None)
+    sources = list(db.scalars(select(models.PaymentSource)))
+    cleared = 0
+    for source in sources:
+        if source.telegram_sender_id is not None:
+            source.telegram_sender_id = None
+            cleared += 1
+    db.commit()
+
+    return {
+        "authorized": False,
+        "session_removed": removed,
+        "sender_bindings_cleared": cleared,
+        "group_mappings_preserved": len(
+            [source for source in sources if source.telegram_group_id is not None]
+        ),
+        "step": "phone",
+    }
 
 
 @router.get("/chats")

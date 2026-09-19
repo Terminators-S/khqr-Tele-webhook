@@ -200,6 +200,15 @@
 
           <div id="telegramSetupState" class="checklist"></div>
 
+          <div id="telegramAccountBox" class="telegram-account-box">
+            <div>
+              <p class="eyebrow">TELEGRAM ACCOUNT</p>
+              <h4 id="telegramAccountTitle">No Telegram account connected</h4>
+              <p id="telegramAccountDetail" class="muted">Save the Telegram API credentials, then sign in with the phone number of the account that can see your ABA payment group.</p>
+            </div>
+            <button id="changeTelegramAccount" class="btn secondary hidden" type="button">Change Telegram account</button>
+          </div>
+
           <form id="telegramCredentialsForm" class="stack compact">
             <div class="field-row">
               <label>Telegram API ID
@@ -249,7 +258,7 @@
             <p class="field-help">We will automatically find the trusted ABA notification sender inside the selected group.</p>
           </div>
 
-          <button id="cancelTelegramAuth" class="link-btn" type="button">Reset Telegram login</button>
+          <button id="cancelTelegramAuth" class="link-btn hidden" type="button">Cancel login attempt</button>
           <p id="telegramAuthMessage" class="muted"></p>
         </article>
 
