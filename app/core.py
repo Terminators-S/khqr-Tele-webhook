@@ -65,6 +65,30 @@ def create_business(db: Session, name: str, slug: str, webhook_url: str | None =
     return business, api_key, webhook_secret
 
 
+def rotate_business_api_key(db: Session, business_id: str) -> tuple[models.Business, str]:
+    business = db.get(models.Business, business_id)
+    if not business:
+        raise NotFound("business not found")
+    api_key = generate_api_key()
+    business.api_key_hash = hash_secret(api_key)
+    db.commit()
+    db.refresh(business)
+    return business, api_key
+
+
+def rotate_business_webhook_secret(db: Session, business_id: str) -> tuple[models.Business, str]:
+    business = db.get(models.Business, business_id)
+    if not business:
+        raise NotFound("business not found")
+    if not business.webhook_url:
+        raise Conflict("configure a webhook URL before rotating its signing secret")
+    webhook_secret = generate_webhook_secret()
+    business.webhook_secret = webhook_secret
+    db.commit()
+    db.refresh(business)
+    return business, webhook_secret
+
+
 def create_source(db: Session, business_id: str, **values):
     business = db.get(models.Business, business_id)
     if not business:

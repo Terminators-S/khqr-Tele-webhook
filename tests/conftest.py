@@ -1,15 +1,23 @@
 import os
 
 import pytest
-from dotenv import dotenv_values
-from sqlalchemy import delete
+from sqlalchemy import delete, make_url
 
-_local_env = dotenv_values(".env")
-os.environ.setdefault(
-    "DATABASE_URL",
-    _local_env.get("DATABASE_URL") or "postgresql+psycopg2://khqr:khqr@127.0.0.1:55432/khqr",
+TEST_DATABASE_URL = os.getenv(
+    "KHQR_TEST_DATABASE_URL",
+    "postgresql+psycopg2://khqr_test:khqr_test@127.0.0.1:55433/khqr_test",
 )
-os.environ.setdefault("INTERNAL_SECRET", "test-internal-secret-32-characters")
+_test_url = make_url(TEST_DATABASE_URL)
+if (
+    _test_url.host not in {"127.0.0.1", "localhost"}
+    or _test_url.port != 55433
+    or _test_url.database != "khqr_test"
+):
+    raise RuntimeError(
+        "pytest refuses non-isolated DATABASE_URL; use loopback port 55433 database khqr_test"
+    )
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+os.environ["INTERNAL_SECRET"] = "test-internal-secret-32-characters"
 
 from app import models
 from app.db import SessionLocal

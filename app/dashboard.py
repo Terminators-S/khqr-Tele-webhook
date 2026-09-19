@@ -82,6 +82,10 @@ class DashboardEnabledUpdate(BaseModel):
     confirm: str = ""
 
 
+class DashboardRotateCredential(BaseModel):
+    confirm: str = ""
+
+
 def _source_has_verified_acceptance(db: Session, source_id: str) -> bool:
     row = db.scalar(
         select(models.PaymentIntent.id).where(
@@ -457,6 +461,102 @@ def dashboard_update_store(
     return result
 
 
+@router.get("/api/stores/{store_id}/integration")
+def dashboard_store_integration(
+    store_id: str,
+    request: Request,
+    _session=Depends(require_dashboard_session),
+    db: Session = Depends(get_db),
+):
+    business = db.get(models.Business, store_id)
+    if not business:
+        raise HTTPException(status_code=404, detail="store not found")
+    settings = get_settings()
+    source = _primary_source(db, business.id)
+    source_payload = _source_payload(source) if source else None
+    verified = bool(source and _source_has_verified_acceptance(db, source.id))
+    live_collector_allowed = bool(
+        not settings.telegram_shadow_only and settings.allow_live_telegram
+    )
+    api_base_url = str(request.base_url).rstrip("/")
+    return {
+        "store_id": business.id,
+        "project_name": business.name,
+        "slug": business.slug,
+        "source_id": source.id if source else None,
+        "currency": source.currency if source else None,
+        "api_base_url": api_base_url,
+        "payment_intent_url": api_base_url + "/v1/payment-intents",
+        "api_key_configured": bool(business.api_key_hash),
+        "webhook_url": business.webhook_url,
+        "webhook_configured": bool(business.webhook_url),
+        "webhook_secret_configured": bool(business.webhook_secret),
+        "telegram_group_id": source.telegram_group_id if source else None,
+        "telegram_sender_id": source.telegram_sender_id if source else None,
+        "telegram_group_configured": bool(source and source.telegram_group_id is not None),
+        "telegram_sender_configured": bool(source and source.telegram_sender_id is not None),
+        "khqr_configured": bool(source_payload and source_payload["khqr_valid"]),
+        "real_payment_test_verified": verified,
+        "source_enabled": bool(source and source.enabled),
+        "live_collector_allowed": live_collector_allowed,
+        "telegram_shadow_only": settings.telegram_shadow_only,
+        "allow_live_telegram": settings.allow_live_telegram,
+        "activation_ready": bool(
+            source_payload
+            and source_payload["configured"]
+            and verified
+            and business.webhook_url
+            and business.webhook_secret
+            and live_collector_allowed
+        ),
+    }
+
+
+@router.post("/api/stores/{store_id}/rotate-api-key")
+def dashboard_rotate_api_key(
+    store_id: str,
+    payload: DashboardRotateCredential,
+    _session=Depends(require_dashboard_csrf),
+    db: Session = Depends(get_db),
+):
+    if payload.confirm != "ROTATE API KEY":
+        raise HTTPException(status_code=400, detail='type "ROTATE API KEY" to continue')
+    try:
+        business, api_key = core.rotate_business_api_key(db, store_id)
+    except core.NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "store_id": business.id,
+        "api_key": api_key,
+        "one_time_secret": True,
+    }
+
+
+@router.post("/api/stores/{store_id}/rotate-webhook-secret")
+def dashboard_rotate_webhook_secret(
+    store_id: str,
+    payload: DashboardRotateCredential,
+    _session=Depends(require_dashboard_csrf),
+    db: Session = Depends(get_db),
+):
+    if payload.confirm != "ROTATE WEBHOOK SECRET":
+        raise HTTPException(
+            status_code=400,
+            detail='type "ROTATE WEBHOOK SECRET" to continue',
+        )
+    try:
+        business, webhook_secret = core.rotate_business_webhook_secret(db, store_id)
+    except core.NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except core.Conflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "store_id": business.id,
+        "webhook_secret": webhook_secret,
+        "one_time_secret": True,
+    }
+
+
 @router.get("/api/businesses")
 def dashboard_businesses(
     _session=Depends(require_dashboard_session),
@@ -694,6 +794,21 @@ def dashboard_set_enabled(
             raise HTTPException(
                 status_code=409,
                 detail="pass a Real Payment Test before dashboard activation",
+            )
+        business = db.get(models.Business, source.business_id)
+        if not business or not business.webhook_url or not business.webhook_secret:
+            raise HTTPException(
+                status_code=409,
+                detail="configure the project webhook and signing secret before dashboard activation",
+            )
+        settings = get_settings()
+        if settings.telegram_shadow_only or not settings.allow_live_telegram:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "live Telegram collector is locked; set TELEGRAM_SHADOW_ONLY=false "
+                    "and ALLOW_LIVE_TELEGRAM=true, restart core services, then activate"
+                ),
             )
     try:
         source = core.set_source_enabled(db, source_id, payload.enabled)

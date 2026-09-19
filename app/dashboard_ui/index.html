@@ -36,6 +36,7 @@
       <nav id="nav">
         <button data-page="home" class="nav-item active">Home</button>
         <button data-page="setup" class="nav-item">Setup</button>
+        <button data-page="integration" class="nav-item">Integration</button>
         <button data-page="test" class="nav-item">Test payment</button>
         <button data-page="activity" class="nav-item">Activity</button>
         <button data-page="advanced" class="nav-item">Advanced</button>
@@ -256,13 +257,126 @@
           <div class="setup-card-head">
             <span class="step-number">4</span>
             <div>
-              <h3>Test a real payment</h3>
-              <p class="muted">Once the first three steps are green, send a small real payment to prove the full flow.</p>
+              <h3>Connect your project</h3>
+              <p class="muted">Link the real website, app or bot that owns your products and orders.</p>
             </div>
             <span id="readyStepBadge" class="pill">Waiting</span>
           </div>
           <div id="setupReadyState" class="checklist"></div>
-          <button id="goToTestButton" class="btn primary" type="button">Open test payment</button>
+          <button id="goToIntegrationButton" class="btn primary" type="button">Open integration setup</button>
+        </article>
+      </section>
+
+      <section id="page-integration" class="page">
+        <div class="hero-panel glass simple-hero">
+          <div>
+            <p class="eyebrow">APPLICATION INTEGRATION</p>
+            <h3>Connect KHQR to your real website, app, bot or product.</h3>
+            <p class="muted">Your product catalog stays in your application. Send the order ID and amount to KHQR, then receive a signed payment event back.</p>
+          </div>
+          <span id="integrationStatusBadge" class="pill warn">Select a store</span>
+        </div>
+
+        <div class="content-grid two">
+          <article class="panel glass">
+            <p class="eyebrow">PROJECT</p>
+            <h3>Connection details</h3>
+            <div id="integrationProjectDetails" class="definition-list"></div>
+          </article>
+
+          <article class="panel glass">
+            <p class="eyebrow">CLIENT CREDENTIALS</p>
+            <h3>Server-to-server access</h3>
+            <p class="muted">API keys are never stored in readable form. If you lost the key shown when the store was created, rotate it here.</p>
+            <div id="integrationCredentialState" class="checklist"></div>
+            <div class="field-row">
+              <button id="rotateApiKeyButton" class="btn secondary" type="button">Generate new API key</button>
+              <button id="rotateWebhookSecretButton" class="btn secondary" type="button">Rotate webhook secret</button>
+            </div>
+            <div id="integrationCredentialReveal" class="secret-content hidden"></div>
+          </article>
+        </div>
+
+        <article class="panel glass">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">WEBHOOK CALLBACK</p>
+              <h3>Where KHQR tells your project “payment completed”</h3>
+            </div>
+            <span id="integrationWebhookBadge" class="pill warn">Not configured</span>
+          </div>
+          <form id="integrationWebhookForm" class="stack compact">
+            <label>Production webhook URL
+              <input id="integrationWebhookUrl" name="webhook_url" type="url" placeholder="https://your-project.com/api/payments/khqr/webhook" />
+            </label>
+            <p class="field-help">KHQR signs webhook bodies with your webhook secret. Your application should verify the signature before delivering a product, credit or order.</p>
+            <button class="btn primary" type="submit">Save webhook URL</button>
+          </form>
+        </article>
+
+        <div class="content-grid two">
+          <article class="panel glass">
+            <div class="panel-head">
+              <div><p class="eyebrow">CREATE PAYMENT</p><h3>Call this from your backend</h3></div>
+              <button id="copyIntegrationCurl" class="btn secondary small" type="button">Copy</button>
+            </div>
+            <pre id="integrationCurl" class="code-sample">Select a store to generate the request.</pre>
+            <p class="field-help">Use your own product/order ID as <code>external_id</code>. The product price stays authoritative in your application.</p>
+          </article>
+
+          <article class="panel glass">
+            <p class="eyebrow">RESPONSE</p>
+            <h3>What your checkout displays</h3>
+            <div class="checklist">
+              <div class="check-row done"><span class="check-icon">✓</span><div class="check-copy"><strong>payment_request.static_khqr</strong><span>Your merchant KHQR payload/image identity.</span></div></div>
+              <div class="check-row done"><span class="check-icon">✓</span><div class="check-copy"><strong>payable_amount_minor</strong><span>Exact amount including the collision-safe cent fingerprint.</span></div></div>
+              <div class="check-row done"><span class="check-icon">✓</span><div class="check-copy"><strong>remark</strong><span>Exact payment note used as a second identity signal.</span></div></div>
+              <div class="check-row done"><span class="check-icon">✓</span><div class="check-copy"><strong>checkout_expires_at</strong><span>Buyer has 8 minutes; matching grace continues for 5 more minutes.</span></div></div>
+            </div>
+          </article>
+        </div>
+
+        <article class="panel glass">
+          <div class="panel-head">
+            <div><p class="eyebrow">WEBHOOK SECURITY</p><h3>Verify every payment event before fulfillment</h3></div>
+          </div>
+          <div class="content-grid two compact-grid">
+            <div class="checklist">
+              <div class="check-row done"><span class="check-icon">1</span><div class="check-copy"><strong>X-KHQR-Event-ID</strong><span>Store processed event IDs and ignore duplicates. Delivery is at-least-once.</span></div></div>
+              <div class="check-row done"><span class="check-icon">2</span><div class="check-copy"><strong>X-KHQR-Timestamp</strong><span>Reject stale requests outside your replay window.</span></div></div>
+              <div class="check-row done"><span class="check-icon">3</span><div class="check-copy"><strong>X-KHQR-Signature</strong><span>Expected format: v1=&lt;hex HMAC-SHA256&gt;.</span></div></div>
+            </div>
+            <pre class="code-sample compact-code">signed = HMAC_SHA256(
+  WEBHOOK_SECRET,
+  X_KHQR_TIMESTAMP + "." + RAW_REQUEST_BODY
+)
+
+constant_time_equal(
+  "v1=" + hex(signed),
+  X_KHQR_SIGNATURE
+)
+
+# Only after verification:
+# mark order paid / deliver product</pre>
+          </div>
+        </article>
+
+        <article class="panel glass">
+          <div class="panel-head">
+            <div><p class="eyebrow">GO LIVE</p><h3>Production readiness</h3></div>
+            <span id="integrationLiveBadge" class="pill warn">Not ready</span>
+          </div>
+          <div id="integrationReadiness" class="checklist"></div>
+          <div class="cutover-note">
+            <strong>Final server cutover</strong>
+            <p>Keep the defaults during setup/testing. When every item above is green, set <code>TELEGRAM_SHADOW_ONLY=false</code> and <code>ALLOW_LIVE_TELEGRAM=true</code> in <code>.env</code>, restart the core services, enable this source here, then start the collector:</p>
+            <pre class="code-sample compact-code">docker compose up -d api settlement webhook
+docker compose --profile telegram up -d telegram</pre>
+          </div>
+          <div class="field-row">
+            <button id="integrationOpenTest" class="btn primary" type="button">Run real payment test</button>
+            <button id="integrationActivate" class="btn secondary" type="button">Enable live source</button>
+          </div>
         </article>
       </section>
 

@@ -7,7 +7,7 @@ install:
 	./scripts/install.sh
 
 test:
-	.venv/bin/pytest -q
+	./scripts/test.sh -q
 
 rc-gate:
 	./scripts/rc_gate_local.sh

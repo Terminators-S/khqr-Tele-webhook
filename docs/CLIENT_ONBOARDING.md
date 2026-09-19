@@ -15,7 +15,20 @@ the Python SDK for payment intents and webhook verification.
 - Secrets are written only to an owner-only file when requested and are never
   printed by the onboarding command.
 
-## Onboard a consuming project
+## Dashboard-first open-source setup
+
+For a normal cloned installation, use the dashboard instead of the internal CLI:
+
+1. **Setup → Store:** create the merchant/project identity and choose currency.
+2. **Setup → Upload your KHQR:** upload the bank-issued reusable static KHQR image. The service validates and keeps that exact image; it does not generate a replacement merchant QR.
+3. **Setup → Telegram:** enter the Telegram API ID/hash, authorize the dedicated account, load groups, select the store's ABA notification group, and let sender discovery bind the trusted notification sender.
+4. **Integration:** configure the consuming website/app/bot webhook, save the one-time signing secret, and save or rotate the one-time client API key. The dashboard shows the project ID, payment-source ID, API URL, Telegram mapping, and a copyable payment-intent request.
+5. **Test payment:** run the SHADOW-only real-money acceptance test while the source is still disabled.
+6. **Go live:** keep `TELEGRAM_SHADOW_ONLY=true` and `ALLOW_LIVE_TELEGRAM=false` until the project webhook, KHQR, Telegram group/sender and Real Payment Test are all green. At approved cutover set `TELEGRAM_SHADOW_ONLY=false` and `ALLOW_LIVE_TELEGRAM=true`, restart core services, enable the source in the dashboard, then start the Telegram profile with `docker compose --profile telegram up -d telegram`.
+
+The merchant application remains the authority for products, prices, orders and fulfillment. KHQR Self-Develop receives a stable external order/product ID plus integer minor-unit amount, verifies payment evidence, then emits a signed payment event back to the merchant application.
+
+## Advanced CLI onboarding
 
 Provide the real source values through flags or environment variables:
 

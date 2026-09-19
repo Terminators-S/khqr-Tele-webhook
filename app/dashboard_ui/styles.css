@@ -884,3 +884,43 @@ tr:last-child td { border-bottom: 0; }
     max-width: 150px;
   }
 }
+
+.code-sample {
+  margin: 0;
+  min-height: 210px;
+  padding: 16px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(5, 13, 20, .62);
+  color: var(--text);
+  font: 600 .76rem/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.definition-row code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+#integrationCredentialReveal {
+  margin-top: 14px;
+}
+#integrationCredentialReveal .field-help {
+  margin: 2px 0 0;
+}
+
+.compact-grid { align-items: stretch; }
+.compact-code { min-height: 0; height: 100%; }
+@media (max-width: 760px) {
+  .compact-code { min-height: 220px; }
+}
+
+.cutover-note {
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255,255,255,.025);
+}
+.cutover-note p { margin: 8px 0 12px; color: var(--muted); line-height: 1.6; }
+.cutover-note .code-sample { font-size: .72rem; }

@@ -78,7 +78,9 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-khqr}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-khqr}
       TELEGRAM_SESSION_NAME: /runtime/khqr_collector
-      TELEGRAM_SHADOW_ONLY: "true"
+      TELEGRAM_SHADOW_ONLY: "${TELEGRAM_SHADOW_ONLY:-true}"
+      ALLOW_LIVE_TELEGRAM: "${ALLOW_LIVE_TELEGRAM:-false}"
+      ALLOW_SHADOW_PROMOTION: "${ALLOW_SHADOW_PROMOTION:-false}"
     command: ["python", "-m", "app.workers.telegram"]
     volumes:
       - ./runtime:/runtime

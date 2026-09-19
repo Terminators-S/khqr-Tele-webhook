@@ -242,6 +242,38 @@ def test_dashboard_activation_requires_uploaded_qr_and_verified_test(
     )
     db.commit()
 
+    blocked_without_webhook = client.post(
+        f"/dashboard/api/sources/{source_id}/enabled",
+        headers={"X-CSRF-Token": csrf},
+        json={"enabled": True, "confirm": "ENABLE SOURCE"},
+    )
+    assert blocked_without_webhook.status_code == 409
+    assert "project webhook" in blocked_without_webhook.json()["detail"]
+
+    configured_project = client.post(
+        f"/dashboard/api/stores/{store['id']}",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "name": store["name"],
+            "currency": "USD",
+            "webhook_url": "https://merchant.example/khqr/webhook",
+        },
+    )
+    assert configured_project.status_code == 200
+    assert configured_project.json()["webhook_secret"]
+
+    blocked_live_lock = client.post(
+        f"/dashboard/api/sources/{source_id}/enabled",
+        headers={"X-CSRF-Token": csrf},
+        json={"enabled": True, "confirm": "ENABLE SOURCE"},
+    )
+    assert blocked_live_lock.status_code == 409
+    assert "live Telegram collector is locked" in blocked_live_lock.json()["detail"]
+
+    settings = khqr_asset.get_settings()
+    monkeypatch.setattr(settings, "telegram_shadow_only", False)
+    monkeypatch.setattr(settings, "allow_live_telegram", True)
+
     enabled = client.post(
         f"/dashboard/api/sources/{source_id}/enabled",
         headers={"X-CSRF-Token": csrf},
@@ -321,3 +353,59 @@ def test_dashboard_overview_is_sanitized():
         json={},
     )
     assert logout.status_code == 200
+
+
+def test_dashboard_integration_manifest_and_secret_rotation(db):
+    csrf = login()
+    store = create_store(csrf, "Integration Store")
+    store_id = store["id"]
+
+    manifest = client.get(f"/dashboard/api/stores/{store_id}/integration")
+    assert manifest.status_code == 200
+    body = manifest.json()
+    assert body["store_id"] == store_id
+    assert body["source_id"] == store["source"]["id"]
+    assert body["api_key_configured"] is True
+    assert body["webhook_configured"] is False
+    assert body["source_enabled"] is False
+    assert "api_key" not in body
+    assert "webhook_secret" not in body
+
+    old_key = store["api_key"]
+    rotated = client.post(
+        f"/dashboard/api/stores/{store_id}/rotate-api-key",
+        headers={"X-CSRF-Token": csrf},
+        json={"confirm": "ROTATE API KEY"},
+    )
+    assert rotated.status_code == 200
+    new_key = rotated.json()["api_key"]
+    assert new_key.startswith("khqr_live_")
+    assert new_key != old_key
+    assert core.business_for_api_key(db, new_key).id == store_id
+    try:
+        core.business_for_api_key(db, old_key)
+        assert False, "old API key should be invalid after rotation"
+    except core.NotFound:
+        pass
+
+    updated = client.post(
+        f"/dashboard/api/stores/{store_id}",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "name": "Integration Store",
+            "currency": "USD",
+            "webhook_url": "https://merchant.example/khqr/webhook",
+        },
+    )
+    assert updated.status_code == 200
+    first_secret = updated.json()["webhook_secret"]
+    assert first_secret.startswith("whsec_")
+
+    rotated_secret = client.post(
+        f"/dashboard/api/stores/{store_id}/rotate-webhook-secret",
+        headers={"X-CSRF-Token": csrf},
+        json={"confirm": "ROTATE WEBHOOK SECRET"},
+    )
+    assert rotated_secret.status_code == 200
+    assert rotated_secret.json()["webhook_secret"].startswith("whsec_")
+    assert rotated_secret.json()["webhook_secret"] != first_secret

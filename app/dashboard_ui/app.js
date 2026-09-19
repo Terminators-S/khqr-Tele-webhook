@@ -8,6 +8,9 @@ const state = {
   evidence: [],
   telegram: null,
   telegramChats: [],
+  integration: null,
+  latestApiKey: "",
+  latestWebhookSecret: "",
   acceptanceSources: [],
   acceptance: null,
   selectedStoreId: sessionStorage.getItem("khqr_selected_store") || "",
@@ -21,7 +24,7 @@ let acceptanceScanTimer = null;
 let acceptanceClockTimer = null;
 
 const $ = id => document.getElementById(id);
-const pages = ["home", "setup", "test", "activity", "advanced"];
+const pages = ["home", "setup", "integration", "test", "activity", "advanced"];
 
 function esc(value) {
   return String(value ?? "")
@@ -124,6 +127,7 @@ function setPage(name) {
   const titles = {
     home: "Home",
     setup: "Setup",
+    integration: "Integration",
     test: "Test payment",
     activity: "Activity",
     advanced: "Advanced",
@@ -170,11 +174,12 @@ function setupState() {
     source.telegram_group_id !== null &&
     source.telegram_sender_id !== null
   );
+  const integrationReady = Boolean(business && business.webhook_configured);
   const testPassed = Boolean(source && state.intents.some(row => row.source_id === source.id && row.status === "TEST_VERIFIED"));
   return {
     business, source, storeReady, paymentReady,
-    telegramAccountReady, telegramReady, testPassed,
-    completed: [storeReady, paymentReady, telegramReady, testPassed].filter(Boolean).length,
+    telegramAccountReady, telegramReady, integrationReady, testPassed,
+    completed: [storeReady, paymentReady, telegramReady, integrationReady].filter(Boolean).length,
   };
 }
 
@@ -199,22 +204,27 @@ function renderGlobalStoreSelector() {
 function renderHome() {
   if (!state.overview) return;
   const s = setupState();
-  const allReady = s.storeReady && s.paymentReady && s.telegramReady;
+  const coreReady = s.storeReady && s.paymentReady && s.telegramReady;
   let headline = "Finish your payment setup";
   let summary = "We will guide you through the remaining steps.";
   let nextPage = "setup";
   let nextLabel = "Continue setup";
 
-  if (allReady && !s.testPassed) {
-    headline = "Your setup is ready for a real test";
+  if (coreReady && !s.integrationReady) {
+    headline = "Connect your real project";
+    summary = "KHQR is configured. Now connect the website, app or bot that owns your products and orders.";
+    nextPage = "integration";
+    nextLabel = "Open integration";
+  } else if (coreReady && s.integrationReady && !s.testPassed) {
+    headline = "Your integration is ready for a real test";
     summary = "Send a small test payment to prove the complete flow before activation.";
     nextPage = "test";
     nextLabel = "Test a payment";
   } else if (s.testPassed) {
     headline = "Payment verification is working";
-    summary = "Your real payment test passed. Production activation remains a separate advanced step.";
-    nextPage = "activity";
-    nextLabel = "View activity";
+    summary = "Your real payment test passed. Review Integration to activate the live source when your project is ready.";
+    nextPage = "integration";
+    nextLabel = "Review go-live";
   }
 
   $("homeHeadline").textContent = headline;
@@ -228,8 +238,10 @@ function renderHome() {
       s.paymentReady ? "Uploaded KHQR verified for " + (s.source.khqr_merchant_name || s.source.merchant_alias || "merchant") : "Upload your store's static KHQR image") +
     checkRow(s.telegramReady, "Telegram notifications",
       s.telegramReady ? "Payment group connected and ABA sender recognized" : "Connect the Telegram payment group") +
+    checkRow(s.integrationReady, "Application integration",
+      s.integrationReady ? "Webhook callback configured" : "Connect your website/app and callback URL") +
     checkRow(s.testPassed, "Real payment test",
-      s.testPassed ? "Passed" : "Send one small payment when setup is ready");
+      s.testPassed ? "Passed" : "Send one small payment when integration is ready");
 
   const safe = state.overview.safety.telegram_shadow_only &&
     !state.overview.safety.allow_live_telegram &&
@@ -258,7 +270,7 @@ function renderSetupStepper() {
     ["1", "Store", s.storeReady],
     ["2", "KHQR", s.paymentReady],
     ["3", "Telegram", s.telegramReady],
-    ["4", "Test", s.testPassed],
+    ["4", "Integration", s.integrationReady],
   ];
   $("setupStepper").innerHTML = steps.map(row =>
     '<div class="setup-step-chip ' + (row[2] ? "done" : "") + '">' +
@@ -379,9 +391,9 @@ function renderTelegramSetup() {
 
   $("telegramSetupState").innerHTML =
     checkRow(Boolean(tg.api_credentials), "Telegram API", tg.api_credentials ? "Saved" : "Add API ID and hash below") +
-    checkRow(Boolean(tg.authorized), "Telegram account", tg.authorized ? "Connected" : "Sign in with your phone number") +
-    checkRow(groupReady, "Payment group", groupReady ? "Selected" : "Choose the group that receives ABA notifications") +
-    checkRow(senderReady, "ABA notifications", senderReady ? "Recognized automatically" : "We will detect the trusted sender");
+    checkRow(Boolean(tg.authorized), "Telegram account", tg.authorized ? "Connected · account " + (tg.account_id || "authorized") : "Sign in with your phone number") +
+    checkRow(groupReady, "Payment group", groupReady ? "Mapped to group " + source.telegram_group_id : "Choose the group that receives ABA notifications") +
+    checkRow(senderReady, "ABA notifications", senderReady ? "Trusted sender " + source.telegram_sender_id : "We will detect the trusted sender");
 
   const ready = Boolean(tg.authorized && groupReady && senderReady);
   $("telegramStepBadge").textContent = ready ? "Ready" : "Not set";
@@ -418,10 +430,11 @@ function renderReadySetup() {
   $("setupReadyState").innerHTML =
     checkRow(s.storeReady, "Store", s.storeReady ? "Ready" : "Finish step 1") +
     checkRow(s.paymentReady, "KHQR", s.paymentReady ? "Valid and scannable" : "Finish step 2") +
-    checkRow(s.telegramReady, "Telegram", s.telegramReady ? "Payment group connected" : "Finish step 3");
-  $("goToTestButton").disabled = !setupReady;
-  $("readyStepBadge").textContent = s.testPassed ? "Passed" : (setupReady ? "Ready to test" : "Waiting");
-  $("readyStepBadge").className = "pill " + (s.testPassed ? "good" : setupReady ? "accent" : "warn");
+    checkRow(s.telegramReady, "Telegram", s.telegramReady ? "Payment group connected" : "Finish step 3") +
+    checkRow(s.integrationReady, "Project callback", s.integrationReady ? "Webhook configured" : "Configure it on the Integration page");
+  $("goToIntegrationButton").disabled = !setupReady;
+  $("readyStepBadge").textContent = s.integrationReady ? "Connected" : (setupReady ? "Connect project" : "Waiting");
+  $("readyStepBadge").className = "pill " + (s.integrationReady ? "good" : setupReady ? "accent" : "warn");
 }
 
 function renderSetup() {
@@ -430,6 +443,164 @@ function renderSetup() {
   renderPaymentSetup();
   renderTelegramSetup();
   renderReadySetup();
+}
+
+function renderCredentialReveal() {
+  const target = $("integrationCredentialReveal");
+  const rows = [];
+  if (state.latestApiKey) rows.push(["API key", state.latestApiKey]);
+  if (state.latestWebhookSecret) rows.push(["Webhook secret", state.latestWebhookSecret]);
+  if (!rows.length) {
+    target.classList.add("hidden");
+    target.innerHTML = "";
+    return;
+  }
+  target.classList.remove("hidden");
+  target.innerHTML = rows.map(row =>
+    '<div class="secret-row"><span>' + esc(row[0]) + '</span><code>' + esc(row[1]) +
+    '</code><button class="btn secondary small" type="button" data-copy-integration="' +
+    esc(row[1]) + '">Copy</button></div>'
+  ).join("") + '<p class="field-help">Save these now. They are not stored in readable form.</p>';
+}
+
+function integrationCurl(info) {
+  if (!info || !info.source_id) return "Select a store to generate the request.";
+  const apiKey = state.latestApiKey || "YOUR_API_KEY";
+  const body = JSON.stringify({
+    source_id: info.source_id,
+    external_id: "order-1001",
+    amount_minor: 500,
+    currency: info.currency || "USD",
+    metadata: { product_id: "sku-123", product_name: "Example product" },
+  });
+  return 'curl -X POST "' + info.payment_intent_url + '" \\\n' +
+    '  -H "Content-Type: application/json" \\\n' +
+    '  -H "X-Api-Key: ' + apiKey + '" \\\n' +
+    '  -H "Idempotency-Key: order-1001" \\\n' +
+    "  -d '" + body + "'";
+}
+
+function renderIntegration() {
+  const info = state.integration;
+  const store = selectedStore();
+  if (!info || !store) {
+    $("integrationStatusBadge").textContent = "Select a store";
+    $("integrationStatusBadge").className = "pill warn";
+    $("integrationProjectDetails").innerHTML = '<div class="empty-state">Create or select a store first.</div>';
+    $("integrationCredentialState").innerHTML = checkRow(false, "API key", "Create a store first");
+    $("integrationWebhookUrl").value = "";
+    $("integrationCurl").textContent = "Select a store to generate the request.";
+    $("integrationReadiness").innerHTML = checkRow(false, "Store", "Create a store first");
+    $("integrationOpenTest").disabled = true;
+    $("integrationActivate").disabled = true;
+    renderCredentialReveal();
+    return;
+  }
+
+  const rows = [
+    ["Project / store", info.project_name],
+    ["Project ID", info.store_id],
+    ["Payment source ID", info.source_id || "Not created"],
+    ["Currency", info.currency || "—"],
+    ["Telegram group", info.telegram_group_id || "Not mapped"],
+    ["Trusted sender", info.telegram_sender_id || "Not detected"],
+    ["API base URL", info.api_base_url],
+  ];
+  $("integrationProjectDetails").innerHTML = rows.map(row =>
+    '<div class="definition-row"><span>' + esc(row[0]) + '</span><strong><code>' +
+    esc(row[1]) + '</code></strong></div>'
+  ).join("");
+
+  $("integrationCredentialState").innerHTML =
+    checkRow(info.api_key_configured, "Client API key", info.api_key_configured ? "Configured · rotate only if lost or compromised" : "Missing") +
+    checkRow(info.webhook_secret_configured, "Webhook signing secret", info.webhook_secret_configured ? "Configured" : "Created automatically when you save a webhook URL");
+
+  if (document.activeElement !== $("integrationWebhookUrl")) {
+    $("integrationWebhookUrl").value = info.webhook_url || "";
+  }
+  $("integrationWebhookBadge").textContent = info.webhook_configured ? "Configured" : "Recommended";
+  $("integrationWebhookBadge").className = "pill " + (info.webhook_configured ? "good" : "warn");
+  $("rotateWebhookSecretButton").disabled = !info.webhook_configured;
+
+  $("integrationCurl").textContent = integrationCurl(info);
+  renderCredentialReveal();
+
+  $("integrationReadiness").innerHTML =
+    checkRow(info.khqr_configured, "Merchant KHQR", info.khqr_configured ? "Uploaded and validated" : "Upload it in Setup") +
+    checkRow(info.telegram_group_configured, "Telegram payment group", info.telegram_group_configured ? "Mapped to this store" : "Select the payment group in Setup") +
+    checkRow(info.telegram_sender_configured, "Trusted ABA sender", info.telegram_sender_configured ? "Detected and bound" : "Run sender discovery in Setup") +
+    checkRow(info.webhook_configured, "Project webhook", info.webhook_configured ? "Your product can receive signed payment events" : "Configure the callback before live use") +
+    checkRow(info.real_payment_test_verified, "Real payment test", info.real_payment_test_verified ? "Verified" : "Run one small real payment") +
+    checkRow(info.live_collector_allowed, "Live Telegram mode", info.live_collector_allowed ? "Server cutover flags are unlocked" : "Safe mode is still locked on the server") +
+    checkRow(info.source_enabled, "Live source", info.source_enabled ? "Enabled" : "Still safely disabled");
+
+  const coreReady = info.khqr_configured && info.telegram_group_configured && info.telegram_sender_configured;
+  $("integrationOpenTest").disabled = !coreReady;
+  $("integrationActivate").disabled = !info.activation_ready && !info.source_enabled;
+  $("integrationActivate").textContent = info.source_enabled ? "Disable live source" : "Enable live source";
+  $("integrationActivate").className = "btn " + (info.source_enabled ? "danger" : "secondary");
+  $("integrationLiveBadge").textContent = info.source_enabled ? "Live" : info.activation_ready ? "Ready to activate" : "Not ready";
+  $("integrationLiveBadge").className = "pill " + (info.source_enabled ? "good" : info.activation_ready ? "accent" : "warn");
+  $("integrationStatusBadge").textContent = info.source_enabled ? "Production live" : info.webhook_configured ? "Project connected" : "Connect project";
+  $("integrationStatusBadge").className = "pill " + (info.source_enabled ? "good" : info.webhook_configured ? "accent" : "warn");
+}
+
+async function loadIntegration() {
+  const store = selectedStore();
+  if (!store) {
+    state.integration = null;
+    renderIntegration();
+    return;
+  }
+  state.integration = await api(
+    "/dashboard/api/stores/" + encodeURIComponent(store.id) + "/integration"
+  );
+  renderIntegration();
+}
+
+async function saveIntegrationWebhook(form) {
+  const store = selectedStore();
+  if (!store) throw new Error("Create or select a store first.");
+  const webhookUrl = String(new FormData(form).get("webhook_url") || "").trim() || null;
+  const result = await api("/dashboard/api/stores/" + encodeURIComponent(store.id), {
+    method: "POST",
+    body: JSON.stringify({
+      name: store.name,
+      currency: (store.source && store.source.currency) || "USD",
+      webhook_url: webhookUrl,
+    }),
+  });
+  state.latestWebhookSecret = result.webhook_secret || "";
+  notice(webhookUrl ? "Webhook saved. Your project can now receive signed payment events." : "Webhook removed.");
+  await refreshAll();
+}
+
+async function rotateIntegrationApiKey() {
+  const store = selectedStore();
+  if (!store) throw new Error("Select a store first.");
+  const confirm = window.prompt('Type "ROTATE API KEY" to invalidate the old key') || "";
+  if (confirm !== "ROTATE API KEY") return;
+  const result = await api("/dashboard/api/stores/" + encodeURIComponent(store.id) + "/rotate-api-key", {
+    method: "POST",
+    body: JSON.stringify({ confirm }),
+  });
+  state.latestApiKey = result.api_key;
+  renderIntegration();
+  notice("New API key created. The previous key no longer works.");
+}
+
+async function rotateIntegrationWebhookSecret() {
+  const store = selectedStore();
+  if (!store) throw new Error("Select a store first.");
+  const confirm = window.prompt('Type "ROTATE WEBHOOK SECRET" to invalidate the old signing secret') || "";
+  if (confirm !== "ROTATE WEBHOOK SECRET") return;
+  const result = await api("/dashboard/api/stores/" + encodeURIComponent(store.id) + "/rotate-webhook-secret", {
+    method: "POST",
+    body: JSON.stringify({ confirm }),
+  });
+  state.latestWebhookSecret = result.webhook_secret;
+  renderIntegration();
+  notice("Webhook signing secret rotated. Update your project before relying on new events.");
 }
 
 function statusLabel(status) {
@@ -751,10 +922,14 @@ async function refreshAll() {
     state.selectedSourceId = currentStore && currentStore.source
       ? currentStore.source.id
       : "";
+    state.integration = currentStore
+      ? await api("/dashboard/api/stores/" + encodeURIComponent(currentStore.id) + "/integration")
+      : null;
 
     renderGlobalStoreSelector();
     renderHome();
     renderSetup();
+    renderIntegration();
     renderAcceptanceSetup();
     renderActivity();
     renderAdvanced();
@@ -799,6 +974,8 @@ async function saveStore(form) {
   if (creating) {
     state.selectedStoreId = result.id;
     state.creatingStore = false;
+    state.latestApiKey = result.api_key || "";
+    state.latestWebhookSecret = result.webhook_secret || "";
     sessionStorage.setItem("khqr_selected_store", result.id);
     showSecrets(result);
     notice("Store created. Next, upload this store's real KHQR image.");
@@ -827,6 +1004,9 @@ function selectStore(storeId) {
   if (!state.stores.some(row => row.id === storeId)) return;
   state.creatingStore = false;
   state.replacingKhqr = false;
+  state.latestApiKey = "";
+  state.latestWebhookSecret = "";
+  state.integration = null;
   state.selectedStoreId = storeId;
   sessionStorage.setItem("khqr_selected_store", storeId);
   const store = selectedStore();
@@ -835,7 +1015,9 @@ function selectStore(storeId) {
   $("storeForm").dataset.renderedMode = "";
   renderHome();
   renderSetup();
+  renderIntegration();
   renderAcceptanceSetup();
+  loadIntegration().catch(error => notice(error.message || String(error), true));
 }
 
 async function uploadKhqrImage(form) {
@@ -1135,7 +1317,49 @@ $("homeNextButton").addEventListener("click", event => {
   setPage(event.currentTarget.dataset.goto || "setup");
 });
 
-$("goToTestButton").addEventListener("click", () => setPage("test"));
+$("goToIntegrationButton").addEventListener("click", () => setPage("integration"));
+
+$("integrationWebhookForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  try { await saveIntegrationWebhook(event.currentTarget); }
+  catch (error) { notice(error.message || String(error), true); }
+});
+
+$("rotateApiKeyButton").addEventListener("click", async () => {
+  try { await rotateIntegrationApiKey(); }
+  catch (error) { notice(error.message || String(error), true); }
+});
+
+$("rotateWebhookSecretButton").addEventListener("click", async () => {
+  try { await rotateIntegrationWebhookSecret(); }
+  catch (error) { notice(error.message || String(error), true); }
+});
+
+$("copyIntegrationCurl").addEventListener("click", async () => {
+  await navigator.clipboard.writeText($("integrationCurl").textContent || "");
+  $("copyIntegrationCurl").textContent = "Copied";
+  window.setTimeout(() => $("copyIntegrationCurl").textContent = "Copy", 1200);
+});
+
+$("integrationCredentialReveal").addEventListener("click", async event => {
+  const button = event.target.closest("[data-copy-integration]");
+  if (!button) return;
+  await navigator.clipboard.writeText(button.dataset.copyIntegration);
+  button.textContent = "Copied";
+  window.setTimeout(() => button.textContent = "Copy", 1200);
+});
+
+$("integrationOpenTest").addEventListener("click", () => setPage("test"));
+
+$("integrationActivate").addEventListener("click", async () => {
+  const source = primarySource();
+  if (!source) return;
+  try {
+    await toggleSource(source.id, Boolean(state.integration && state.integration.source_enabled));
+  } catch (error) {
+    notice(error.message || String(error), true);
+  }
+});
 
 $("storeForm").addEventListener("submit", async event => {
   event.preventDefault();

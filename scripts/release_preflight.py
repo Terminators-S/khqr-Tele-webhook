@@ -31,8 +31,14 @@ def main() -> int:
     if url is not None:
         if not url.drivername.startswith("postgresql"):
             errors.append("release requires PostgreSQL")
-        if url.host not in {"127.0.0.1", "localhost"} or url.port != 55432:
-            errors.append("release gate must target isolated loopback PostgreSQL on port 55432")
+        if (
+            url.host not in {"127.0.0.1", "localhost"}
+            or url.port != 55433
+            or url.database != "khqr_test"
+        ):
+            errors.append(
+                "release gate must target isolated loopback PostgreSQL on port 55433 database khqr_test"
+            )
 
 
     weak_secrets = {
