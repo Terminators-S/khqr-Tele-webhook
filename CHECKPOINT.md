@@ -54,8 +54,17 @@
 - Telegram migration focused tests (session path + sender discovery + SHADOW observer): 12/12 PASS.
 - Full isolated PostgreSQL suite after SHADOW-observer slice: 48/48 PASS.
 - PostgreSQL concurrency gates after SHADOW-observer slice: 30 DUAL + 70 overflow, one duplicate-settlement winner, 40/40 SKIP LOCKED exactly once.
-- Dedicated Telegram session path is locked to runtime/khqr_collector.session; no authorized session exists yet.
+- Dedicated Telegram session is now authorized at runtime/khqr_collector.session with mode 0600; Creative Studio's active admin_session.session was not reused.
+- Fresh-session peer-cache warmup added before numeric group history reads so valid configured group IDs can resolve in a newly authorized Pyrogram session without exposing dialog contents.
+- Read-only sender discovery PASS on the staged Creative Studio source: 3/3 parsed ABA notifications came from one unanimous trusted sender; database writes remained zero.
+- Trusted sender bound through the guarded internal endpoint while the source remained disabled/not-ready.
+- One-shot SHADOW replay PASS: 11 visible history messages, 3 payment notifications, 3 SHADOW evidence rows, 0 sender mismatches, 0 conflicts, 0 non-SHADOW evidence.
+- Idempotent SHADOW replay PASS: second replay produced 3 existing rows, 0 new rows, 0 conflicts.
+- Creative Studio parity PASS for all 3 available payments: 3/3 Trx ID match, 3/3 amount match, 3/3 timestamps within 5 seconds, 3/3 source-group match, max time delta 0.000 seconds.
+- Dedicated account currently exposes only 11 history messages in that group, so 3 payments are the full visible parity sample at this checkpoint.
+- Full isolated PostgreSQL suite after peer-cache warmup: 48/48 PASS.
+- Full isolated PostgreSQL suite after SHADOW timestamp/parity artifact update: 48/48 PASS.
 - Telegram API credentials are configured; TELEGRAM_SHADOW_ONLY=true, ALLOW_LIVE_TELEGRAM=false, ALLOW_SHADOW_PROMOTION=false.
 
 ## Next task
-Complete the dedicated standalone Telegram authorization inside a secure server terminal/tmux session under runtime/. Then run read-only sender discovery against the staged Creative Studio source, review sender unanimity, configure the observed sender through the guarded internal endpoint while the source stays disabled, run the bounded one-shot SHADOW observation, and compare Trx/amount/time/source parity with Creative Studio. Do not reuse Creative Studio's active admin_session.session and do not enable ALLOW_SHADOW_PROMOTION or ALLOW_LIVE_TELEGRAM.
+Keep Creative Studio authoritative and the standalone source disabled. Expand SHADOW parity when more payment notifications become visible/arrive, then prepare the explicit cutover runbook and rollback gate. Do not enable the source, ALLOW_SHADOW_PROMOTION, or ALLOW_LIVE_TELEGRAM without a separate approved cutover decision.

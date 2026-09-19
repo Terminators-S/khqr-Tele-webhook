@@ -87,6 +87,9 @@ def observe_message(db, source: models.PaymentSource, message: Any) -> dict[str,
         received_at=getattr(message, "date", None),
         initial_state="SHADOW",
     )
+    message_date = getattr(message, "date", None)
+    if message_date is not None and hasattr(message_date, "isoformat"):
+        message_date = message_date.isoformat()
     return {
         "result": "existing" if existing else "shadow_observed",
         "evidence_id": evidence.id,
@@ -94,6 +97,7 @@ def observe_message(db, source: models.PaymentSource, message: Any) -> dict[str,
         "trx_id": evidence.trx_id,
         "amount_minor": evidence.amount_minor,
         "message_id": str(getattr(message, "id", "")),
+        "received_at": message_date,
     }
 
 
@@ -140,6 +144,8 @@ async def observe(source_id: str, limit: int) -> dict[str, Any]:
         authorized = bool(await client.connect())
         if not authorized:
             raise RuntimeError("dedicated Telegram session is not authorized")
+        async for _dialog in client.get_dialogs(limit=500):
+            pass
         async for message in client.get_chat_history(group_id, limit=limit):
             messages.append(message)
     finally:

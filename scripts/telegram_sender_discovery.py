@@ -131,6 +131,11 @@ async def discover(source_id: str, limit: int) -> dict[str, Any]:
     messages: list[Any] = []
     try:
         await client.start()
+        # A fresh Pyrogram session may not yet know numeric peers even when the
+        # configured chat ID is valid. Warm only the local peer cache; do not
+        # inspect or emit dialog contents.
+        async for _dialog in client.get_dialogs(limit=500):
+            pass
         async for message in client.get_chat_history(group_id, limit=limit):
             messages.append(message)
     finally:

@@ -48,6 +48,7 @@ def test_trusted_message_is_persisted_as_shadow_only(db):
         ),
     )
     assert row["result"] == "shadow_observed"
+    assert row["received_at"] == "2026-09-19T00:00:00+00:00"
     evidence = db.scalar(select(models.PaymentEvidence))
     assert evidence is not None
     assert evidence.state == "SHADOW"
