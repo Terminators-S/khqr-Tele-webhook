@@ -1,4 +1,4 @@
-# Checkpoint — 2026-09-18
+# Checkpoint — 2026-09-19
 
 ## Locked decisions
 - Checkout TTL: 8 minutes.
@@ -33,6 +33,17 @@
 - Python wheel contains both server package and khqr_sdk: PASS.
 - Fresh loopback core deployment (API + PostgreSQL + settlement + webhook): healthy with clean database.
 - Telegram shadow preflight currently blocks only on missing dedicated standalone session.
+- Reusable client onboarding command added; credentials are owner-only (0600) and secrets stay out of stdout.
+- No-money integration smoke PASS through the running API, settlement worker, and webhook worker: SDK intent -> synthetic RECEIVED evidence -> PAID -> verified signed webhook.
+- Client onboarding supports staged disabled sources when the trusted Telegram sender is not yet known.
+- Guarded source activation API added: sender can change only while disabled; enabling fails closed unless source configuration is complete.
+- Focused onboarding/API/SDK/webhook suite: 15/15 PASS on isolated PostgreSQL.
+- Full isolated PostgreSQL suite after activation slice: 36/36 PASS.
+- PostgreSQL concurrency gates after activation slice: 30 DUAL + 70 overflow, one duplicate-settlement winner, 40/40 SKIP LOCKED exactly once.
+- Fresh Docker image build/import PASS after the client-integration slice.
+- Core redeployed healthy on loopback after destructive gate cleanup.
+- First consuming project staged: Creative Studio Business + ABA source exists in standalone with real source identity, source disabled, sender unset, 0 intents, 0 evidence. CreativeStudioWeb remains authoritative.
+- Staged Creative Studio credentials are stored only under git-ignored runtime/ with mode 0600.
 
 ## Next task
-Core v0.1.0 is release-ready and deployed loopback-only. Highest-impact next work is client integration/onboarding: create a real Business + PaymentSource for the first consuming project, wire the khqr_sdk intent/webhook contract, and run a no-money integration smoke while CreativeStudioWeb remains authoritative. In parallel, create a dedicated Telegram session under runtime/ for later SHADOW-only parity; do not reuse Creative Studio's active admin_session.session and do not enable ALLOW_SHADOW_PROMOTION or ALLOW_LIVE_TELEGRAM.
+Create a dedicated standalone Telegram session under runtime/ and run SHADOW-only observation against the staged Creative Studio source. Determine the real trusted ABA notification sender from the dedicated session, compare parsed Trx ID/amount/time/source against Creative Studio history, then configure the sender through the guarded internal endpoint. Keep the source disabled until shadow parity is reviewed. Do not reuse Creative Studio's active admin_session.session and do not enable ALLOW_SHADOW_PROMOTION or ALLOW_LIVE_TELEGRAM.

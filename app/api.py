@@ -126,6 +126,48 @@ def add_source(business_id: str, payload: schemas.PaymentSourceCreate, db: Sessi
     return source_out(source)
 
 
+@router.post(
+    "/internal/sources/{source_id}/sender",
+    response_model=schemas.PaymentSourceOut,
+    dependencies=[Depends(require_internal)],
+)
+def configure_source_sender(
+    source_id: str,
+    payload: schemas.PaymentSourceSenderUpdate,
+    db: Session = Depends(get_db),
+):
+    try:
+        source = core.configure_source_sender(
+            db,
+            source_id,
+            payload.telegram_sender_id,
+        )
+    except core.NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except core.Conflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return source_out(source)
+
+
+@router.post(
+    "/internal/sources/{source_id}/enabled",
+    response_model=schemas.PaymentSourceOut,
+    dependencies=[Depends(require_internal)],
+)
+def set_source_enabled(
+    source_id: str,
+    payload: schemas.PaymentSourceEnabledUpdate,
+    db: Session = Depends(get_db),
+):
+    try:
+        source = core.set_source_enabled(db, source_id, payload.enabled)
+    except core.NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except core.Conflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return source_out(source)
+
+
 @router.post("/v1/payment-intents", response_model=schemas.PaymentIntentOut)
 def add_intent(
     payload: schemas.PaymentIntentCreate,

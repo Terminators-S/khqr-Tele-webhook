@@ -1,4 +1,4 @@
-.PHONY: test rc-gate deploy-core stop-core shadow-preflight
+.PHONY: test rc-gate deploy-core stop-core integration-smoke shadow-preflight
 
 test:
 	.venv/bin/pytest -q
@@ -11,6 +11,9 @@ deploy-core:
 
 stop-core:
 	docker compose stop api settlement webhook
+
+integration-smoke:
+	.venv/bin/python scripts/integration_smoke.py --timeout 25
 
 shadow-preflight:
 	.venv/bin/python scripts/telegram_shadow_preflight.py

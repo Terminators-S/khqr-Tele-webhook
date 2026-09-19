@@ -41,6 +41,14 @@ class PaymentSourceOut(BaseModel):
     ready: bool
 
 
+class PaymentSourceSenderUpdate(BaseModel):
+    telegram_sender_id: int
+
+
+class PaymentSourceEnabledUpdate(BaseModel):
+    enabled: bool
+
+
 class PaymentIntentCreate(BaseModel):
     source_id: str
     external_id: str = Field(min_length=1, max_length=180)

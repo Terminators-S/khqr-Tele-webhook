@@ -32,14 +32,17 @@ def as_utc(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
-def source_ready(source: models.PaymentSource) -> bool:
+def source_configured(source: models.PaymentSource) -> bool:
     return bool(
-        source.enabled
-        and source.telegram_group_id is not None
+        source.telegram_group_id is not None
         and source.telegram_sender_id is not None
         and (source.merchant_alias or "").strip()
         and (source.static_khqr or "").strip()
     )
+
+
+def source_ready(source: models.PaymentSource) -> bool:
+    return bool(source.enabled and source_configured(source))
 
 
 def create_business(db: Session, name: str, slug: str, webhook_url: str | None = None):
@@ -75,6 +78,38 @@ def create_source(db: Session, business_id: str, **values):
     except IntegrityError as exc:
         db.rollback()
         raise Conflict("payment source conflicts with existing configuration") from exc
+    db.refresh(source)
+    return source
+
+
+def configure_source_sender(
+    db: Session,
+    source_id: str,
+    telegram_sender_id: int,
+) -> models.PaymentSource:
+    source = db.get(models.PaymentSource, source_id)
+    if not source:
+        raise NotFound("payment source not found")
+    if source.enabled:
+        raise Conflict("disable payment source before changing Telegram sender")
+    source.telegram_sender_id = telegram_sender_id
+    db.commit()
+    db.refresh(source)
+    return source
+
+
+def set_source_enabled(
+    db: Session,
+    source_id: str,
+    enabled: bool,
+) -> models.PaymentSource:
+    source = db.get(models.PaymentSource, source_id)
+    if not source:
+        raise NotFound("payment source not found")
+    if enabled and not source_configured(source):
+        raise Conflict("payment source configuration is incomplete")
+    source.enabled = enabled
+    db.commit()
     db.refresh(source)
     return source
 
