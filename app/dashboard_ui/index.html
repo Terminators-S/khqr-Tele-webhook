@@ -571,6 +571,30 @@ docker compose --profile telegram up -d telegram</pre>
     </main>
   </div>
 
+  <dialog id="paymentRecoveryDialog" class="secret-dialog glass payment-recovery-dialog">
+    <form id="paymentRecoveryForm" class="stack compact">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">CONTROLLED RECOVERY</p>
+          <h3>Apply verified ABA transaction</h3>
+        </div>
+        <button id="paymentRecoveryClose" class="icon-btn" type="button">×</button>
+      </div>
+      <div id="paymentRecoverySummary" class="ready-summary"></div>
+      <label>ABA transaction ID
+        <input id="paymentRecoveryTrx" autocomplete="off" inputmode="numeric" placeholder="1789..." minlength="8" maxlength="128" required />
+      </label>
+      <label>Confirmation
+        <input id="paymentRecoveryConfirm" autocomplete="off" placeholder='Type "RECOVER PAYMENT"' required />
+      </label>
+      <p class="field-help">This never invents payment evidence. The transaction must already exist in the trusted verified payment history and must not be allocated elsewhere.</p>
+      <div class="form-actions">
+        <button id="paymentRecoverySubmit" class="btn primary" type="submit">Recover payment</button>
+        <button id="paymentRecoveryCancel" class="btn secondary" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="secretDialog" class="secret-dialog glass">
     <form method="dialog">
       <div class="panel-head">
