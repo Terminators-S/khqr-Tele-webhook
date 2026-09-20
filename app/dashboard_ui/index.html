@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
-  <title>KHQR Store Setup</title>
+  <title>KHQR Enterprise Payments</title>
   <link rel="stylesheet" href="/dashboard/assets/styles.css" />
 </head>
 <body>
@@ -14,8 +14,8 @@
   <section id="loginView" class="login-shell">
     <div class="login-card glass">
       <div class="brand-mark">K</div>
-      <p class="eyebrow">KHQR STORE</p>
-      <h1>Set up payments without the technical mess.</h1>
+      <p class="eyebrow">KHQR ENTERPRISE PAYMENTS</p>
+      <h1>Operate KHQR payments from one secure control plane.</h1>
       <p class="muted">Connect your store, KHQR and Telegram payment notifications in one guided setup.</p>
       <form id="loginForm" class="stack">
         <label>Dashboard password
@@ -31,14 +31,14 @@
     <aside class="sidebar glass">
       <div class="brand">
         <div class="brand-mark small">K</div>
-        <div><strong>KHQR</strong><span>Store Payments</span></div>
+        <div><strong>KHQR</strong><span>Enterprise Payments</span></div>
       </div>
       <nav id="nav">
         <button data-page="home" class="nav-item active">Home</button>
         <button data-page="setup" class="nav-item">Setup</button>
         <button data-page="integration" class="nav-item">Integration</button>
         <button data-page="test" class="nav-item">Test payment</button>
-        <button data-page="activity" class="nav-item">Activity</button>
+        <button data-page="activity" class="nav-item">Payments</button>
         <button data-page="advanced" class="nav-item">Advanced</button>
       </nav>
       <div class="sidebar-foot">
@@ -51,7 +51,7 @@
     <main class="main">
       <header class="topbar">
         <div>
-          <p class="eyebrow">KHQR STORE PAYMENTS</p>
+          <p class="eyebrow">KHQR ENTERPRISE PAYMENTS</p>
           <h2 id="pageTitle">Home</h2>
         </div>
         <div class="top-actions">
@@ -500,12 +500,45 @@ docker compose --profile telegram up -d telegram</pre>
 
       <section id="page-activity" class="page">
         <div class="hero-panel glass simple-hero">
-          <div><p class="eyebrow">ACTIVITY</p><h3>Payments and test history</h3><p class="muted">A simple view of what the system has seen.</p></div>
+          <div>
+            <p class="eyebrow">PAYMENT OPERATIONS</p>
+            <h3>Enterprise payment control center</h3>
+            <p class="muted">Monitor live payment intents, customer payment remarks, settlement state, bank evidence and controlled transaction recovery.</p>
+          </div>
+          <span id="paymentOpsBadge" class="pill accent">Operational</span>
         </div>
-        <div class="content-grid two">
-          <article class="panel glass"><h3>Payment tests</h3><div id="intentTable" class="table-wrap"></div></article>
-          <article class="panel glass"><h3>Bank notifications</h3><div id="evidenceTable" class="table-wrap"></div></article>
-        </div>
+
+        <div id="paymentMetricGrid" class="metric-grid"></div>
+
+        <article class="panel glass">
+          <div class="panel-head payment-ops-head">
+            <div>
+              <p class="eyebrow">PAYMENT INTENTS</p>
+              <h3>Orders and subscriptions</h3>
+            </div>
+            <div class="payment-toolbar">
+              <input id="paymentSearch" type="search" placeholder="Search order, remark or intent…" autocomplete="off" />
+              <select id="paymentStatusFilter">
+                <option value="">All statuses</option>
+                <option value="PENDING">Awaiting payment</option>
+                <option value="PARTIALLY_PAID">Partially paid</option>
+                <option value="PAID">Paid</option>
+                <option value="TEST_WAITING">Test waiting</option>
+                <option value="TEST_VERIFIED">Test passed</option>
+              </select>
+            </div>
+          </div>
+          <div id="intentTable" class="table-wrap"></div>
+          <p class="field-help">Recovery is deliberately guarded: only pending or partially paid intents can be matched to an exact verified ABA transaction ID.</p>
+        </article>
+
+        <article class="panel glass">
+          <div class="panel-head">
+            <div><p class="eyebrow">BANK EVIDENCE</p><h3>Telegram payment notifications</h3></div>
+            <span class="pill">Trusted source only</span>
+          </div>
+          <div id="evidenceTable" class="table-wrap"></div>
+        </article>
       </section>
 
       <section id="page-advanced" class="page">
@@ -537,6 +570,30 @@ docker compose --profile telegram up -d telegram</pre>
       </section>
     </main>
   </div>
+
+  <dialog id="paymentRecoveryDialog" class="secret-dialog glass payment-recovery-dialog">
+    <form id="paymentRecoveryForm" class="stack compact">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">CONTROLLED RECOVERY</p>
+          <h3>Apply verified ABA transaction</h3>
+        </div>
+        <button id="paymentRecoveryClose" class="icon-btn" type="button">×</button>
+      </div>
+      <div id="paymentRecoverySummary" class="ready-summary"></div>
+      <label>ABA transaction ID
+        <input id="paymentRecoveryTrx" autocomplete="off" inputmode="numeric" placeholder="1789..." minlength="8" maxlength="128" required />
+      </label>
+      <label>Confirmation
+        <input id="paymentRecoveryConfirm" autocomplete="off" placeholder='Type "RECOVER PAYMENT"' required />
+      </label>
+      <p class="field-help">This never invents payment evidence. The transaction must already exist in the trusted verified payment history and must not be allocated elsewhere.</p>
+      <div class="form-actions">
+        <button id="paymentRecoverySubmit" class="btn primary" type="submit">Recover payment</button>
+        <button id="paymentRecoveryCancel" class="btn secondary" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="secretDialog" class="secret-dialog glass">
     <form method="dialog">

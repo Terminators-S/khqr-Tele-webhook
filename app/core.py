@@ -1,5 +1,6 @@
 import json
 import secrets
+import string
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
@@ -22,6 +23,9 @@ class NotFound(PaymentCoreError):
 
 class Conflict(PaymentCoreError):
     pass
+
+
+REMARK_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 
 
 def utcnow() -> datetime:
@@ -189,9 +193,34 @@ def business_for_api_key(db: Session, api_key: str) -> models.Business:
     return business
 
 
-def _new_remark(db: Session, source_id: str) -> str:
-    for _ in range(12):
-        remark = "KQ" + secrets.token_hex(6).upper()
+def _normalize_remark_prefix(prefix: str | None) -> str:
+    value = (prefix or "KQ").strip().upper()
+    allowed = set(string.ascii_uppercase + string.digits)
+    if not (2 <= len(value) <= 6) or any(char not in allowed for char in value):
+        raise Conflict("remark prefix must be 2-6 ASCII letters or digits")
+    return value
+
+
+def _new_remark(db: Session, source_id: str, prefix: str | None = None) -> str:
+    # Preserve the legacy KQ remark shape for existing integrations. A client
+    # opts into the shorter human-entry format only by supplying a prefix.
+    if prefix is None:
+        for _ in range(12):
+            remark = "KQ" + secrets.token_hex(6).upper()
+            exists = db.scalar(
+                select(models.PaymentRequest.id).where(
+                    models.PaymentRequest.source_id == source_id,
+                    models.PaymentRequest.remark == remark,
+                )
+            )
+            if not exists:
+                return remark
+        raise Conflict("could not allocate unique payment remark")
+
+    normalized = _normalize_remark_prefix(prefix)
+    for _ in range(24):
+        suffix = "".join(secrets.choice(REMARK_ALPHABET) for _ in range(5))
+        remark = normalized + suffix
         exists = db.scalar(
             select(models.PaymentRequest.id).where(
                 models.PaymentRequest.source_id == source_id,
@@ -263,13 +292,19 @@ def create_payment_intent(
     amount_minor: int,
     currency: str,
     metadata: dict,
+    remark_prefix: str | None = None,
 ):
     currency = currency.strip().upper()
     existing = _existing_intent(db, business.id, idempotency_key, external_id)
     if existing:
         if not _existing_intent_matches(existing, source_id, amount_minor, currency):
             raise Conflict("idempotency/external reference already exists with different payment data")
-        return existing, get_request_for_intent(db, existing.id)
+        existing_request = get_request_for_intent(db, existing.id)
+        if remark_prefix:
+            normalized_prefix = _normalize_remark_prefix(remark_prefix)
+            if not existing_request.remark.startswith(normalized_prefix):
+                raise Conflict("idempotency/external reference already exists with a different remark prefix")
+        return existing, existing_request
 
     source = db.get(models.PaymentSource, source_id)
     if not source or source.business_id != business.id:
@@ -299,7 +334,7 @@ def create_payment_intent(
     request = models.PaymentRequest(
         intent_id=intent.id,
         source_id=source.id,
-        remark=_new_remark(db, source.id),
+        remark=_new_remark(db, source.id, remark_prefix),
         mode="REMARK_PRIMARY",
         offset_minor=None,
         payable_amount_minor=amount_minor,
@@ -362,7 +397,14 @@ def create_payment_intent(
         db.rollback()
         winner = _existing_intent(db, business.id, idempotency_key, external_id)
         if winner and _existing_intent_matches(winner, source_id, amount_minor, currency):
-            return winner, get_request_for_intent(db, winner.id)
+            winner_request = get_request_for_intent(db, winner.id)
+            if remark_prefix:
+                normalized_prefix = _normalize_remark_prefix(remark_prefix)
+                if not winner_request.remark.startswith(normalized_prefix):
+                    raise Conflict(
+                        "idempotency/external reference already exists with a different remark prefix"
+                    ) from exc
+            return winner, winner_request
         raise Conflict("payment-intent creation conflicted with another request") from exc
 
 

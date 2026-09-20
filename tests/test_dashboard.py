@@ -58,7 +58,7 @@ def upload_qr(csrf, source_id, image_bytes, filename="merchant.png"):
 def test_dashboard_page_and_auth_gate():
     page = client.get("/dashboard")
     assert page.status_code == 200
-    assert "KHQR Store Setup" in page.text
+    assert "KHQR Enterprise Payments" in page.text
     assert "Upload your KHQR" in page.text
     assert "Choose KHQR image" in page.text
     assert "Bakong account ID" not in page.text
@@ -518,3 +518,56 @@ def test_bulk_invalid_qr_does_not_consume_default_source(monkeypatch, tmp_path):
     assert body["created"][0]["id"] == original_source_id
     assert body["store"]["source_count"] == 1
     assert body["store"]["source"]["khqr_account_id"] == "bulk-good@aba"
+
+
+def test_dashboard_payment_operations_show_remark_and_recover_exact_trx(
+    db, business_and_source
+):
+    business, source, _api_key = business_and_source
+    csrf = login()
+    intent, request = core.create_payment_intent(
+        db,
+        business,
+        source_id=source.id,
+        external_id="BB-INV-1001",
+        idempotency_key="BB-INV-1001",
+        amount_minor=1500,
+        currency="USD",
+        metadata={"application": "bikeboss"},
+        remark_prefix="BB",
+    )
+    evidence = core.ingest_evidence(
+        db,
+        source_id=source.id,
+        transport="telegram",
+        transport_message_id="msg-bb-recovery",
+        sender_id=source.telegram_sender_id,
+        raw_text=f"Transaction ID: 178900001234567\nUSD {request.payable_amount_minor / 100:.2f}",
+        trx_id="178900001234567",
+        amount_minor=request.payable_amount_minor,
+        currency="USD",
+    )
+    evidence.state = "UNMATCHED"
+    db.commit()
+
+    listed = client.get("/dashboard/api/intents?limit=20")
+    assert listed.status_code == 200
+    row = next(item for item in listed.json() if item["id"] == intent.id)
+    assert row["remark"].startswith("BB")
+    assert row["payable_amount_minor"] == request.payable_amount_minor
+
+    blocked = client.post(
+        f"/dashboard/api/intents/{intent.id}/recover",
+        headers={"X-CSRF-Token": csrf},
+        json={"trx_id": evidence.trx_id, "confirm": "NO"},
+    )
+    assert blocked.status_code == 400
+
+    recovered = client.post(
+        f"/dashboard/api/intents/{intent.id}/recover",
+        headers={"X-CSRF-Token": csrf},
+        json={"trx_id": evidence.trx_id, "confirm": "RECOVER PAYMENT"},
+    )
+    assert recovered.status_code == 200
+    assert recovered.json()["status"] == "PAID"
+    assert recovered.json()["remark"].startswith("BB")

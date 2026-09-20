@@ -64,6 +64,7 @@ class KhqrClient:
         idempotency_key: str,
         currency: str = "USD",
         metadata: dict[str, Any] | None = None,
+        remark_prefix: str | None = None,
     ) -> dict[str, Any]:
         response = self._client.post(
             "/v1/payment-intents",
@@ -74,6 +75,7 @@ class KhqrClient:
                 "amount_minor": amount_minor,
                 "currency": currency,
                 "metadata": metadata or {},
+                "remark_prefix": remark_prefix,
             },
         )
         return self._json(response)

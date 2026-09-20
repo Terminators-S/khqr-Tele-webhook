@@ -1,0 +1,88 @@
+name: Verify private server access
+
+on:
+  push:
+    branches:
+      - feature/bikeboss-enterprise-payments
+    paths:
+      - .github/workflows/verify-server-access.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_PORT: ${{ secrets.SERVER_PORT }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+
+    steps:
+      - name: Verify required secrets are configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in SERVER_HOST SERVER_USER SERVER_SSH_KEY TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing GitHub Actions secret: $name"
+              missing=1
+            else
+              echo "Configured: $name"
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "Required deployment secrets are present."
+
+      - name: Join Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:github-actions
+          ping: ${{ secrets.SERVER_HOST }}
+
+      - name: Configure deployment SSH key
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/khqr_deploy
+          chmod 600 ~/.ssh/khqr_deploy
+          port="${SERVER_PORT:-22}"
+          ssh-keyscan -p "$port" -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Verify SSH and server prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          port="${SERVER_PORT:-22}"
+          ssh -i ~/.ssh/khqr_deploy \
+            -p "$port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            "$SERVER_USER@$SERVER_HOST" \
+            'set -e
+             echo "SSH_OK"
+             printf "USER="; whoami
+             printf "HOST="; hostname
+             printf "TAILSCALE_IP="; tailscale ip -4 | head -n1
+             if command -v docker >/dev/null 2>&1; then
+               echo "DOCKER_OK"
+               docker --version
+               docker compose version
+             else
+               echo "DOCKER_MISSING"
+               exit 2
+             fi
+             test -d /opt/khqr && echo "DEPLOY_DIR_OK" || echo "DEPLOY_DIR_MISSING"'

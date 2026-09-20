@@ -48,6 +48,7 @@ def test_onboard_source_and_create_idempotent_intent():
         "amount_minor": 141,
         "currency": "USD",
         "metadata": {"cart": "A"},
+        "remark_prefix": "BB",
     }
 
     first = client.post("/v1/payment-intents", headers=headers, json=body)
@@ -56,6 +57,8 @@ def test_onboard_source_and_create_idempotent_intent():
     assert second.status_code == 200
     assert first.json()["id"] == second.json()["id"]
     assert first.json()["payment_request"]["mode"] == "DUAL"
+    assert first.json()["payment_request"]["remark"].startswith("BB")
+    assert len(first.json()["payment_request"]["remark"]) == 7
 
 
 def test_ready_requires_at_least_one_valid_enabled_source():
@@ -151,3 +154,19 @@ def test_staged_source_activation_requires_verified_sender_and_explicit_enable()
     )
     assert corrected.status_code == 200
     assert corrected.json()["telegram_sender_id"] == 778
+
+
+def test_payment_intent_rejects_invalid_remark_prefix(business_and_source):
+    business, source, api_key = business_and_source
+    response = client.post(
+        "/v1/payment-intents",
+        headers={"X-Api-Key": api_key, "Idempotency-Key": "bad-prefix"},
+        json={
+            "source_id": source.id,
+            "external_id": "order-bad-prefix",
+            "amount_minor": 1500,
+            "currency": "USD",
+            "remark_prefix": "B-",
+        },
+    )
+    assert response.status_code == 422

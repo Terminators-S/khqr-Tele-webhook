@@ -39,3 +39,13 @@ def test_expected_real_shape_with_nonempty_remark():
     assert parsed.trx_id == "178959999999999"
     assert parsed.amount_minor == 141
     assert parsed.remark == "KQABCDEF123456"
+
+
+def test_parse_short_bikeboss_remark():
+    parsed = parse_aba_text(
+        "Payment received\nTransaction ID: 178900001234567\n"
+        "Amount: USD 15.01\nRemark: BB7K2P"
+    )
+    assert parsed.trx_id == "178900001234567"
+    assert parsed.amount_minor == 1501
+    assert parsed.remark == "BB7K2P"
