@@ -710,10 +710,10 @@ function renderActivity() {
   const paidMinor = paid.reduce((sum, row) => sum + Number(row.paid_minor || 0), 0);
   const currency = source ? source.currency : "USD";
   $("paymentMetricGrid").innerHTML = [
-    ["Paid", String(paid.length), money(paidMinor, currency)],
-    ["Awaiting", String(pending.length), "Open payment intents"],
-    ["Needs review", String(review.length), "Evidence not safely allocated"],
-    ["Notifications", String(evidence.length), "Trusted Telegram evidence"],
+    ["Recent paid", String(paid.length), money(paidMinor, currency)],
+    ["Recent awaiting", String(pending.length), "Open payment intents"],
+    ["Recent review", String(review.length), "Evidence not safely allocated"],
+    ["Recent evidence", String(evidence.length), "Trusted Telegram notifications"],
   ].map(row =>
     '<div class="metric"><span>' + esc(row[0]) + '</span><strong>' + esc(row[1]) +
     '</strong><small>' + esc(row[2]) + '</small></div>'
