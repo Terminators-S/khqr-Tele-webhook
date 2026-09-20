@@ -185,6 +185,7 @@ def add_intent(
             amount_minor=payload.amount_minor,
             currency=payload.currency,
             metadata=payload.metadata,
+            remark_prefix=payload.remark_prefix,
         )
         return intent_out(db, intent)
     except core.NotFound as exc:
