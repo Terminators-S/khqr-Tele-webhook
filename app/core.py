@@ -202,6 +202,21 @@ def _normalize_remark_prefix(prefix: str | None) -> str:
 
 
 def _new_remark(db: Session, source_id: str, prefix: str | None = None) -> str:
+    # Preserve the legacy KQ remark shape for existing integrations. A client
+    # opts into the shorter human-entry format only by supplying a prefix.
+    if prefix is None:
+        for _ in range(12):
+            remark = "KQ" + secrets.token_hex(6).upper()
+            exists = db.scalar(
+                select(models.PaymentRequest.id).where(
+                    models.PaymentRequest.source_id == source_id,
+                    models.PaymentRequest.remark == remark,
+                )
+            )
+            if not exists:
+                return remark
+        raise Conflict("could not allocate unique payment remark")
+
     normalized = _normalize_remark_prefix(prefix)
     for _ in range(24):
         suffix = "".join(secrets.choice(REMARK_ALPHABET) for _ in range(5))
