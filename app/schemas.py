@@ -55,6 +55,7 @@ class PaymentIntentCreate(BaseModel):
     amount_minor: int = Field(gt=0)
     currency: str = "USD"
     metadata: dict[str, Any] = Field(default_factory=dict)
+    remark_prefix: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]{2,6}$")
 
 
 class PaymentRequestOut(BaseModel):
