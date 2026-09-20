@@ -965,3 +965,50 @@ tr:last-child td { border-bottom: 0; }
   .payment-source-toolbar { grid-template-columns: 1fr; }
   .payment-source-toolbar .btn { width: 100%; }
 }
+
+
+/* Enterprise payment operations */
+.payment-ops-head {
+  align-items: end;
+}
+.payment-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 190px);
+  gap: 10px;
+  min-width: min(520px, 100%);
+}
+.payment-toolbar input,
+.payment-toolbar select {
+  min-height: 42px;
+}
+.table-sub {
+  display: block;
+  max-width: 220px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: .64rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#page-activity .panel + .panel {
+  margin-top: 14px;
+}
+#page-activity td strong {
+  display: block;
+}
+#page-activity td code {
+  font-weight: 800;
+  letter-spacing: .05em;
+}
+
+@media (max-width: 820px) {
+  .payment-ops-head {
+    display: grid;
+  }
+  .payment-toolbar {
+    grid-template-columns: 1fr;
+    min-width: 0;
+    width: 100%;
+  }
+}
