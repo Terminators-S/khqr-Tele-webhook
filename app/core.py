@@ -284,7 +284,12 @@ def create_payment_intent(
     if existing:
         if not _existing_intent_matches(existing, source_id, amount_minor, currency):
             raise Conflict("idempotency/external reference already exists with different payment data")
-        return existing, get_request_for_intent(db, existing.id)
+        existing_request = get_request_for_intent(db, existing.id)
+        if remark_prefix:
+            normalized_prefix = _normalize_remark_prefix(remark_prefix)
+            if not existing_request.remark.startswith(normalized_prefix):
+                raise Conflict("idempotency/external reference already exists with a different remark prefix")
+        return existing, existing_request
 
     source = db.get(models.PaymentSource, source_id)
     if not source or source.business_id != business.id:
@@ -377,7 +382,14 @@ def create_payment_intent(
         db.rollback()
         winner = _existing_intent(db, business.id, idempotency_key, external_id)
         if winner and _existing_intent_matches(winner, source_id, amount_minor, currency):
-            return winner, get_request_for_intent(db, winner.id)
+            winner_request = get_request_for_intent(db, winner.id)
+            if remark_prefix:
+                normalized_prefix = _normalize_remark_prefix(remark_prefix)
+                if not winner_request.remark.startswith(normalized_prefix):
+                    raise Conflict(
+                        "idempotency/external reference already exists with a different remark prefix"
+                    ) from exc
+            return winner, winner_request
         raise Conflict("payment-intent creation conflicted with another request") from exc
 
 
