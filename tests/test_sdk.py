@@ -27,12 +27,14 @@ def test_sdk_create_intent_sends_auth_and_idempotency_headers():
             amount_minor=141,
             idempotency_key="idem_1",
             metadata={"cart": 1},
+            remark_prefix="BB",
         )
 
     assert response["id"] == "pi_1"
     assert captured["api_key"] == "client-key"
     assert captured["idempotency"] == "idem_1"
     assert captured["body"]["amount_minor"] == 141
+    assert captured["body"]["remark_prefix"] == "BB"
 
 
 def test_sdk_raises_structured_api_error():
