@@ -129,7 +129,7 @@ function setPage(name) {
     setup: "Setup",
     integration: "Integration",
     test: "Test payment",
-    activity: "Activity",
+    activity: "Payments",
     advanced: "Advanced",
   };
   $("pageTitle").textContent = titles[name] || name;
