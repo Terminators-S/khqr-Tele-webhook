@@ -88,6 +88,11 @@ class DashboardRotateCredential(BaseModel):
     confirm: str = ""
 
 
+class DashboardRecoverPayment(BaseModel):
+    trx_id: str = Field(min_length=8, max_length=128)
+    confirm: str = ""
+
+
 def _source_has_verified_acceptance(db: Session, source_id: str) -> bool:
     row = db.scalar(
         select(models.PaymentIntent.id).where(
@@ -1030,18 +1035,77 @@ def dashboard_intents(
             .limit(limit)
         )
     )
-    return [
-        {
-            "id": row.id,
-            "external_id": row.external_id,
-            "source_id": row.source_id,
-            "amount_minor": row.base_amount_minor,
-            "currency": row.currency,
-            "status": row.status,
-            "paid_minor": row.paid_minor,
-            "excess_minor": row.excess_minor,
-            "created_at": row.created_at,
-            "settled_at": row.settled_at,
-        }
-        for row in rows
-    ]
+    results = []
+    for row in rows:
+        request = db.scalar(
+            select(models.PaymentRequest).where(models.PaymentRequest.intent_id == row.id)
+        )
+        results.append(
+            {
+                "id": row.id,
+                "business_id": row.business_id,
+                "external_id": row.external_id,
+                "source_id": row.source_id,
+                "amount_minor": row.base_amount_minor,
+                "payable_amount_minor": request.payable_amount_minor if request else row.base_amount_minor,
+                "remark": request.remark if request else None,
+                "mode": request.mode if request else None,
+                "currency": row.currency,
+                "status": row.status,
+                "paid_minor": row.paid_minor,
+                "excess_minor": row.excess_minor,
+                "created_at": row.created_at,
+                "checkout_expires_at": row.checkout_expires_at,
+                "match_expires_at": request.match_expires_at if request else None,
+                "settled_at": row.settled_at,
+            }
+        )
+    return results
+
+
+@router.post("/api/intents/{intent_id}/recover")
+def dashboard_recover_payment(
+    intent_id: str,
+    payload: DashboardRecoverPayment,
+    _session=Depends(require_dashboard_csrf),
+    db: Session = Depends(get_db),
+):
+    if payload.confirm != "RECOVER PAYMENT":
+        raise HTTPException(
+            status_code=400,
+            detail='type "RECOVER PAYMENT" to apply a verified transaction',
+        )
+    intent = db.get(models.PaymentIntent, intent_id)
+    if not intent:
+        raise HTTPException(status_code=404, detail="payment intent not found")
+    if intent.status not in {"PENDING", "PARTIALLY_PAID"}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"payment intent is {intent.status.lower()} and cannot be recovered",
+        )
+    business = db.get(models.Business, intent.business_id)
+    if not business:
+        raise HTTPException(status_code=404, detail="payment business not found")
+    try:
+        recovered = core.recover_by_trx(
+            db,
+            business,
+            intent.id,
+            payload.trx_id.strip(),
+            actor="dashboard:payment-operations",
+        )
+    except core.NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except core.Conflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    request = core.get_request_for_intent(db, recovered.id)
+    return {
+        "id": recovered.id,
+        "external_id": recovered.external_id,
+        "status": recovered.status,
+        "paid_minor": recovered.paid_minor,
+        "payable_amount_minor": request.payable_amount_minor,
+        "currency": recovered.currency,
+        "remark": request.remark,
+        "settled_at": recovered.settled_at,
+    }
