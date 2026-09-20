@@ -58,7 +58,7 @@ def upload_qr(csrf, source_id, image_bytes, filename="merchant.png"):
 def test_dashboard_page_and_auth_gate():
     page = client.get("/dashboard")
     assert page.status_code == 200
-    assert "KHQR Store Setup" in page.text
+    assert "KHQR Enterprise Payments" in page.text
     assert "Upload your KHQR" in page.text
     assert "Choose KHQR image" in page.text
     assert "Bakong account ID" not in page.text
