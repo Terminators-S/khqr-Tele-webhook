@@ -38,7 +38,7 @@
         <button data-page="setup" class="nav-item">Setup</button>
         <button data-page="integration" class="nav-item">Integration</button>
         <button data-page="test" class="nav-item">Test payment</button>
-        <button data-page="activity" class="nav-item">Activity</button>
+        <button data-page="activity" class="nav-item">Payments</button>
         <button data-page="advanced" class="nav-item">Advanced</button>
       </nav>
       <div class="sidebar-foot">
@@ -500,12 +500,45 @@ docker compose --profile telegram up -d telegram</pre>
 
       <section id="page-activity" class="page">
         <div class="hero-panel glass simple-hero">
-          <div><p class="eyebrow">ACTIVITY</p><h3>Payments and test history</h3><p class="muted">A simple view of what the system has seen.</p></div>
+          <div>
+            <p class="eyebrow">PAYMENT OPERATIONS</p>
+            <h3>Enterprise payment control center</h3>
+            <p class="muted">Monitor live payment intents, BB remarks, settlement state, bank evidence and controlled transaction recovery.</p>
+          </div>
+          <span id="paymentOpsBadge" class="pill accent">Operational</span>
         </div>
-        <div class="content-grid two">
-          <article class="panel glass"><h3>Payment tests</h3><div id="intentTable" class="table-wrap"></div></article>
-          <article class="panel glass"><h3>Bank notifications</h3><div id="evidenceTable" class="table-wrap"></div></article>
-        </div>
+
+        <div id="paymentMetricGrid" class="metric-grid"></div>
+
+        <article class="panel glass">
+          <div class="panel-head payment-ops-head">
+            <div>
+              <p class="eyebrow">PAYMENT INTENTS</p>
+              <h3>Orders and subscriptions</h3>
+            </div>
+            <div class="payment-toolbar">
+              <input id="paymentSearch" type="search" placeholder="Search order, remark or intent…" autocomplete="off" />
+              <select id="paymentStatusFilter">
+                <option value="">All statuses</option>
+                <option value="PENDING">Awaiting payment</option>
+                <option value="PARTIALLY_PAID">Partially paid</option>
+                <option value="PAID">Paid</option>
+                <option value="TEST_WAITING">Test waiting</option>
+                <option value="TEST_VERIFIED">Test passed</option>
+              </select>
+            </div>
+          </div>
+          <div id="intentTable" class="table-wrap"></div>
+          <p class="field-help">Recovery is deliberately guarded: only pending or partially paid intents can be matched to an exact verified ABA transaction ID.</p>
+        </article>
+
+        <article class="panel glass">
+          <div class="panel-head">
+            <div><p class="eyebrow">BANK EVIDENCE</p><h3>Telegram payment notifications</h3></div>
+            <span class="pill">Trusted source only</span>
+          </div>
+          <div id="evidenceTable" class="table-wrap"></div>
+        </article>
       </section>
 
       <section id="page-advanced" class="page">
