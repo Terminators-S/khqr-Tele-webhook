@@ -696,30 +696,87 @@ function renderEvidenceTable(targetId, rows, compact) {
 
 function renderActivity() {
   const source = primarySource();
-  const intents = source
+  const sourceIntents = source
     ? state.intents.filter(row => row.source_id === source.id)
     : [];
   const evidence = source
     ? state.evidence.filter(row => row.source_id === source.id)
     : [];
+
+  const paid = sourceIntents.filter(row => row.status === "PAID");
+  const pending = sourceIntents.filter(row => row.status === "PENDING" || row.status === "PARTIALLY_PAID");
+  const review = evidence.filter(row => row.state === "QUARANTINED" || row.state === "UNMATCHED");
+  const paidMinor = paid.reduce((sum, row) => sum + Number(row.paid_minor || 0), 0);
+  const currency = source ? source.currency : "USD";
+  $("paymentMetricGrid").innerHTML = [
+    ["Paid", String(paid.length), money(paidMinor, currency)],
+    ["Awaiting", String(pending.length), "Open payment intents"],
+    ["Needs review", String(review.length), "Evidence not safely allocated"],
+    ["Notifications", String(evidence.length), "Trusted Telegram evidence"],
+  ].map(row =>
+    '<div class="metric"><span>' + esc(row[0]) + '</span><strong>' + esc(row[1]) +
+    '</strong><small>' + esc(row[2]) + '</small></div>'
+  ).join("");
+
+  const search = String($("paymentSearch")?.value || "").trim().toLowerCase();
+  const status = String($("paymentStatusFilter")?.value || "");
+  const intents = sourceIntents.filter(row => {
+    if (status && row.status !== status) return false;
+    if (!search) return true;
+    return [row.external_id, row.remark, row.id]
+      .some(value => String(value || "").toLowerCase().includes(search));
+  });
+
   const intentTarget = $("intentTable");
   if (!intents.length) {
-    intentTarget.innerHTML = '<div class="empty-state">No payment tests yet.</div>';
+    intentTarget.innerHTML = '<div class="empty-state">No payment intents match this view.</div>';
   } else {
     const rows = intents.map(row => {
       const kind = row.status === "TEST_VERIFIED" || row.status === "PAID"
         ? "good"
         : row.status === "TEST_EXPIRED" || row.status === "TEST_MISMATCH"
           ? "bad" : "warn";
-      return "<tr><td>" + esc(row.external_id || "Payment") + "</td><td>" +
-        esc(money(row.amount_minor, row.currency)) + "</td><td>" +
+      const recoverable = row.status === "PENDING" || row.status === "PARTIALLY_PAID";
+      return "<tr><td><strong>" + esc(row.external_id || "Payment") +
+        '</strong><small class="table-sub">' + esc(row.id) + "</small></td><td><code>" +
+        esc(row.remark || "—") + "</code></td><td>" +
+        esc(money(row.payable_amount_minor ?? row.amount_minor, row.currency)) + "</td><td>" +
         badge(statusLabel(row.status), kind) + "</td><td>" +
-        esc(dt(row.created_at)) + "</td></tr>";
+        esc(money(row.paid_minor, row.currency)) + "</td><td>" +
+        esc(dt(row.created_at)) + "</td><td>" +
+        (recoverable
+          ? '<button class="btn secondary small" data-recover-payment="' + esc(row.id) + '">Recover</button>'
+          : "—") +
+        "</td></tr>";
     }).join("");
-    intentTarget.innerHTML = '<table><thead><tr><th>Payment</th><th>Amount</th><th>Status</th><th>Time</th></tr></thead><tbody>' +
+    intentTarget.innerHTML =
+      '<table><thead><tr><th>Payment</th><th>Remark</th><th>Payable</th><th>Status</th><th>Paid</th><th>Created</th><th>Control</th></tr></thead><tbody>' +
       rows + "</tbody></table>";
   }
   renderEvidenceTable("evidenceTable", evidence, false);
+}
+
+async function recoverPayment(intentId) {
+  const row = state.intents.find(item => item.id === intentId);
+  if (!row) throw new Error("Payment intent not found.");
+  const trxId = (window.prompt(
+    "Enter the exact ABA transaction ID for " + (row.external_id || intentId)
+  ) || "").trim();
+  if (!trxId) return;
+  const confirm = window.prompt('Type "RECOVER PAYMENT" to apply this verified transaction') || "";
+  if (confirm !== "RECOVER PAYMENT") return;
+  const result = await api(
+    "/dashboard/api/intents/" + encodeURIComponent(intentId) + "/recover",
+    {
+      method: "POST",
+      body: JSON.stringify({ trx_id: trxId, confirm }),
+    }
+  );
+  notice(
+    "Payment recovered: " + (result.external_id || result.id) +
+    " is now " + statusLabel(result.status) + "."
+  );
+  await refreshAll();
 }
 
 function renderAdvanced() {
@@ -1684,6 +1741,15 @@ $("cancelTelegramAuth").addEventListener("click", async () => {
   state.telegramAuthStep = "phone";
   renderTelegramSetup();
   telegramMessage("Telegram login reset.");
+});
+
+$("paymentSearch").addEventListener("input", renderActivity);
+$("paymentStatusFilter").addEventListener("change", renderActivity);
+$("intentTable").addEventListener("click", async event => {
+  const button = event.target.closest("[data-recover-payment]");
+  if (!button) return;
+  try { await recoverPayment(button.dataset.recoverPayment); }
+  catch (error) { notice(error.message || String(error), true); }
 });
 
 $("sourceList").addEventListener("click", async event => {
