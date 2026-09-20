@@ -1,5 +1,6 @@
 import json
 import secrets
+import string
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
@@ -22,6 +23,9 @@ class NotFound(PaymentCoreError):
 
 class Conflict(PaymentCoreError):
     pass
+
+
+REMARK_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 
 
 def utcnow() -> datetime:
@@ -189,9 +193,19 @@ def business_for_api_key(db: Session, api_key: str) -> models.Business:
     return business
 
 
-def _new_remark(db: Session, source_id: str) -> str:
-    for _ in range(12):
-        remark = "KQ" + secrets.token_hex(6).upper()
+def _normalize_remark_prefix(prefix: str | None) -> str:
+    value = (prefix or "KQ").strip().upper()
+    allowed = set(string.ascii_uppercase + string.digits)
+    if not (2 <= len(value) <= 6) or any(char not in allowed for char in value):
+        raise Conflict("remark prefix must be 2-6 ASCII letters or digits")
+    return value
+
+
+def _new_remark(db: Session, source_id: str, prefix: str | None = None) -> str:
+    normalized = _normalize_remark_prefix(prefix)
+    for _ in range(24):
+        suffix = "".join(secrets.choice(REMARK_ALPHABET) for _ in range(5))
+        remark = normalized + suffix
         exists = db.scalar(
             select(models.PaymentRequest.id).where(
                 models.PaymentRequest.source_id == source_id,
@@ -263,6 +277,7 @@ def create_payment_intent(
     amount_minor: int,
     currency: str,
     metadata: dict,
+    remark_prefix: str | None = None,
 ):
     currency = currency.strip().upper()
     existing = _existing_intent(db, business.id, idempotency_key, external_id)
@@ -299,7 +314,7 @@ def create_payment_intent(
     request = models.PaymentRequest(
         intent_id=intent.id,
         source_id=source.id,
-        remark=_new_remark(db, source.id),
+        remark=_new_remark(db, source.id, remark_prefix),
         mode="REMARK_PRIMARY",
         offset_minor=None,
         payable_amount_minor=amount_minor,
