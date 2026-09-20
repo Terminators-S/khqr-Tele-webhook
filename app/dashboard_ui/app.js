@@ -18,6 +18,7 @@ const state = {
   creatingStore: false,
   replacingKhqr: false,
   telegramAuthStep: "phone",
+  recoveryIntentId: "",
 };
 
 let acceptanceScanTimer = null;
@@ -756,27 +757,59 @@ function renderActivity() {
   renderEvidenceTable("evidenceTable", evidence, false);
 }
 
-async function recoverPayment(intentId) {
+function openPaymentRecovery(intentId) {
   const row = state.intents.find(item => item.id === intentId);
   if (!row) throw new Error("Payment intent not found.");
-  const trxId = (window.prompt(
-    "Enter the exact ABA transaction ID for " + (row.external_id || intentId)
-  ) || "").trim();
-  if (!trxId) return;
-  const confirm = window.prompt('Type "RECOVER PAYMENT" to apply this verified transaction') || "";
-  if (confirm !== "RECOVER PAYMENT") return;
-  const result = await api(
-    "/dashboard/api/intents/" + encodeURIComponent(intentId) + "/recover",
-    {
-      method: "POST",
-      body: JSON.stringify({ trx_id: trxId, confirm }),
-    }
-  );
-  notice(
-    "Payment recovered: " + (result.external_id || result.id) +
-    " is now " + statusLabel(result.status) + "."
-  );
-  await refreshAll();
+  state.recoveryIntentId = intentId;
+  $("paymentRecoveryTrx").value = "";
+  $("paymentRecoveryConfirm").value = "";
+  $("paymentRecoverySummary").innerHTML =
+    '<div class="definition-list">' +
+    '<div><span>Payment</span><strong>' + esc(row.external_id || row.id) + '</strong></div>' +
+    '<div><span>Remark</span><strong><code>' + esc(row.remark || "—") + '</code></strong></div>' +
+    '<div><span>Payable</span><strong>' +
+      esc(money(row.payable_amount_minor ?? row.amount_minor, row.currency)) +
+    '</strong></div>' +
+    '<div><span>Status</span><strong>' + esc(statusLabel(row.status)) + '</strong></div>' +
+    '</div>';
+  $("paymentRecoveryDialog").showModal();
+  window.setTimeout(() => $("paymentRecoveryTrx").focus(), 0);
+}
+
+function closePaymentRecovery() {
+  state.recoveryIntentId = "";
+  $("paymentRecoveryDialog").close();
+}
+
+async function submitPaymentRecovery(event) {
+  event.preventDefault();
+  const intentId = state.recoveryIntentId;
+  if (!intentId) throw new Error("Payment intent not selected.");
+  const trxId = $("paymentRecoveryTrx").value.trim();
+  const confirm = $("paymentRecoveryConfirm").value.trim();
+  if (confirm !== "RECOVER PAYMENT") {
+    throw new Error('Type "RECOVER PAYMENT" exactly to continue.');
+  }
+
+  const button = $("paymentRecoverySubmit");
+  button.disabled = true;
+  try {
+    const result = await api(
+      "/dashboard/api/intents/" + encodeURIComponent(intentId) + "/recover",
+      {
+        method: "POST",
+        body: JSON.stringify({ trx_id: trxId, confirm }),
+      }
+    );
+    closePaymentRecovery();
+    notice(
+      "Payment recovered: " + (result.external_id || result.id) +
+      " is now " + statusLabel(result.status) + "."
+    );
+    await refreshAll();
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function renderAdvanced() {
@@ -1745,11 +1778,21 @@ $("cancelTelegramAuth").addEventListener("click", async () => {
 
 $("paymentSearch").addEventListener("input", renderActivity);
 $("paymentStatusFilter").addEventListener("change", renderActivity);
-$("intentTable").addEventListener("click", async event => {
+$("intentTable").addEventListener("click", event => {
   const button = event.target.closest("[data-recover-payment]");
   if (!button) return;
-  try { await recoverPayment(button.dataset.recoverPayment); }
+  try { openPaymentRecovery(button.dataset.recoverPayment); }
   catch (error) { notice(error.message || String(error), true); }
+});
+$("paymentRecoveryForm").addEventListener("submit", async event => {
+  try { await submitPaymentRecovery(event); }
+  catch (error) { notice(error.message || String(error), true); }
+});
+$("paymentRecoveryClose").addEventListener("click", closePaymentRecovery);
+$("paymentRecoveryCancel").addEventListener("click", closePaymentRecovery);
+$("paymentRecoveryDialog").addEventListener("cancel", event => {
+  event.preventDefault();
+  closePaymentRecovery();
 });
 
 $("sourceList").addEventListener("click", async event => {
