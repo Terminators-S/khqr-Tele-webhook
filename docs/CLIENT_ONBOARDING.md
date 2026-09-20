@@ -159,6 +159,12 @@ Use `khqr_sdk.KhqrClient.create_payment_intent()` with a stable external order
 ID and idempotency key. Display the returned `payment_request.static_khqr`,
 `payment_request.payable_amount_minor`, and exact `payment_request.remark`.
 
+Clients may also send an optional `remark_prefix` of 2–6 ASCII letters/digits.
+The service keeps the prefix and adds a short 5-character human-friendly suffix.
+For example, BikeBoss sends `remark_prefix="BB"`, producing notes such as
+`BB7K2P`. Prefixes are presentation/identity aids only; clients must still
+display and require the exact returned remark.
+
 The buyer-facing checkout expires after 8 minutes. The amount reservation
 continues for the 5-minute late-match grace, for 13 minutes total.
 
